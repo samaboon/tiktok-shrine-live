@@ -4,7 +4,9 @@
 mod app;
 mod config;
 mod events;
+mod krathong;
 mod scene;
+mod updater;
 
 use app::{AppInit, ShotPlan, ShrineApp};
 use config::Config;
@@ -38,14 +40,20 @@ struct Args {
     settings: bool,
     no_status: bool,
     stopped: bool,
+    theme: Option<String>,
+    record: Option<(PathBuf, f32, f32, u32)>,
+    http_in_shot: bool,
+    fake_version: Option<String>,
 }
 
 fn parse_args() -> Args {
-    let mut a = Args { config: None, demo: vec![], shot_at: None, out: None, settings_tab: None, bg: None, layout: None, width: None, seed: None, preview: false, settings: false, no_status: false, stopped: false };
+    let mut a = Args { config: None, demo: vec![], shot_at: None, out: None, settings_tab: None, bg: None, layout: None, width: None, seed: None, preview: false, settings: false, no_status: false, stopped: false, theme: None, record: None, http_in_shot: false, fake_version: None };
     let mut it = std::env::args().skip(1);
     while let Some(x) = it.next() {
         match x.as_str() {
             "--config" => a.config = it.next().map(PathBuf::from),
+            // pretend to be an older version (to test the updater)
+            "--fake-version" => a.fake_version = it.next(),
             // --demo pray:4:ชื่อ   (action:tier(1-5):name)
             "--demo" => {
                 if let Some(v) = it.next() {
@@ -70,6 +78,18 @@ fn parse_args() -> Args {
             "--settings" => a.settings = true,
             "--no-status" => a.no_status = true,
             "--stopped" => a.stopped = true,
+            "--theme" | "--mode" => a.theme = it.next(),
+            "--http" => a.http_in_shot = true,
+            // --record DIR START END FPS : dump frames (PNG) for GIF/MP4 previews
+            "--record" => {
+                let d = it.next().map(PathBuf::from);
+                let s0 = it.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+                let s1 = it.next().and_then(|v| v.parse().ok()).unwrap_or(10.0);
+                let fps = it.next().and_then(|v| v.parse().ok()).unwrap_or(20);
+                if let Some(d) = d {
+                    a.record = Some((d, s0, s1, fps));
+                }
+            }
             "--help" | "-h" => {
                 println!("tiktok-shrine-live [--config PATH] [--settings]\n  test: --demo pray:5:ชื่อ --shot-at 7 --out shot.png [--bg transparent|green|scene] [--layout top|full] [--preview]");
                 std::process::exit(0);
@@ -178,11 +198,23 @@ fn main() -> eframe::Result<()> {
 
     let assets_dir = [dir.join("assets"), config::base_dir().join("assets")].into_iter().find(|p| p.exists()).unwrap_or_else(|| dir.join("assets"));
 
-    let script = if cfg.tiktok.bridge_script.trim().is_empty() || !dir.join(&cfg.tiktok.bridge_script).exists() {
-        extract_bridge(&dir)
-    } else {
+    updater::cleanup_old();
+    let mut bridge_ver = updater::builtin_bridge_version();
+    let script = if !cfg.tiktok.bridge_script.trim().is_empty() && dir.join(&cfg.tiktok.bridge_script).is_file() && cfg.tiktok.bridge_script.trim() != "bridge/bridge.js" {
+        bridge_ver = format!("{} (กำหนดเอง)", cfg.tiktok.bridge_script);
         dir.join(&cfg.tiktok.bridge_script)
+    } else if let Some((p, v)) = updater::bridge_override(&dir) {
+        eprintln!("[bridge] ใช้ตัวเชื่อมที่อัปเดตแล้ว {v}: {}", p.display());
+        bridge_ver = v;
+        p
+    } else {
+        extract_bridge(&dir)
     };
+    let current_ver = args.fake_version.clone().unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+    let upd = updater::Updater::new(&cfg.update.repo, &cfg.update.api_base, &cfg.update.download_base, &cfg.update.bridge_tag, dir.clone(), current_ver, bridge_ver);
+    if cfg.update.check_on_start && !shot_mode {
+        upd.check();
+    }
     let bridge = Arc::new(Mutex::new(BridgeState {
         username: cfg.tiktok.username.trim().trim_start_matches('@').to_string(),
         sign_key: cfg.tiktok.sign_api_key.clone(),
@@ -227,6 +259,9 @@ fn main() -> eframe::Result<()> {
     let open_settings = args.settings || (!shot_mode && cfg.tiktok.username.trim().is_empty());
 
     let http_cfg = cfg.http.clone();
+    let state = Arc::new(Mutex::new(String::from("{}")));
+    let state_app = state.clone();
+    let http_in_shot = args.http_in_shot;
     let bridge2 = bridge.clone();
     eframe::run_native(
         "TikTok Shrine Live",
@@ -246,8 +281,8 @@ fn main() -> eframe::Result<()> {
             let (tx, rx) = mpsc::channel();
             let sink = EventSink::new(tx, cc.egui_ctx.clone());
             let mut sources: Vec<Box<dyn EventSource>> = vec![];
-            if http_cfg.enabled && !shot_mode {
-                sources.push(Box::new(HttpSource { bind: http_cfg.bind.clone() }));
+            if http_cfg.enabled && (!shot_mode || http_in_shot) {
+                sources.push(Box::new(HttpSource { bind: http_cfg.bind.clone(), state: state.clone() }));
             }
             if !shot_mode {
                 sources.push(Box::new(TikTokBridgeSource { ctl: bridge2.clone() }));
@@ -256,7 +291,7 @@ fn main() -> eframe::Result<()> {
                 eprintln!("[source] {}", s.name());
                 s.start(sink.clone());
             }
-            Ok(Box::new(ShrineApp::new(AppInit { cfg, cfg_path, rx, bridge: bridge2, assets_dir, shot, demo: args.demo, seed: args.seed, open_settings, start_stopped: args.stopped })))
+            Ok(Box::new(ShrineApp::new(AppInit { cfg, cfg_path, rx, bridge: bridge2, assets_dir, shot, demo: args.demo, seed: args.seed, open_settings, start_stopped: args.stopped, state: state_app, theme: args.theme.clone(), record: args.record.clone(), updater: upd.clone() })))
         }),
     )
 }

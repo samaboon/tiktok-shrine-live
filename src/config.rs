@@ -16,6 +16,56 @@ pub struct Config {
     pub timing: TimingCfg,
     pub tiers: Vec<TierCfg>,
     pub siamsi: SiamsiCfg,
+    pub theme: ThemeCfg,
+    pub krathong: KrathongCfg,
+    pub update: UpdateCfg,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct UpdateCfg {
+    /// check GitHub Releases when the app starts
+    pub check_on_start: bool,
+    pub repo: String,
+    pub api_base: String,
+    pub download_base: String,
+    /// rolling release tag that carries the newest TikTok bridge bundle
+    pub bridge_tag: String,
+}
+impl Default for UpdateCfg {
+    fn default() -> Self {
+        Self { check_on_start: true, repo: "samaboon/tiktok-shrine-live".into(), api_base: "https://api.github.com".into(), download_base: "https://github.com".into(), bridge_tag: "bridge-latest".into() }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ThemeCfg {
+    /// "shrine" = ไหว้พระ / เซียมซี,  "krathong" = ลอยกระทง
+    pub mode: String,
+}
+impl Default for ThemeCfg {
+    fn default() -> Self {
+        Self { mode: "shrine".into() }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct KrathongCfg {
+    pub hint_text: String,
+    pub wish_title: String,
+    pub max_floating: usize,
+    /// seconds a krathong keeps floating before fading out
+    pub float_seconds: f32,
+    /// gift -> action for this mode ("pray" = ลอยกระทง+ขอเลข, "siamsi" = อธิษฐาน+คำอวยพร). Empty = use [gifts]
+    pub gifts: BTreeMap<String, String>,
+    pub blessings: Vec<String>,
+}
+impl Default for KrathongCfg {
+    fn default() -> Self {
+        Self { hint_text: String::new(), wish_title: "คำอวยพรสำหรับ".into(), max_floating: 14, float_seconds: 120.0, gifts: BTreeMap::new(), blessings: vec![] }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -54,6 +104,8 @@ pub struct WindowCfg {
     pub show_hint: bool,
     pub hint_text: String,
     pub show_status: bool,
+    /// when no gift is playing: "still" = still picture (default), "ambient" = subtle motion, "hidden" = fully transparent
+    pub idle: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -117,6 +169,7 @@ impl Default for WindowCfg {
             show_hint: true,
             hint_text: String::new(),
             show_status: true,
+            idle: "still".into(),
         }
     }
 }
@@ -147,6 +200,9 @@ impl Default for Config {
             timing: TimingCfg::default(),
             tiers: vec![],
             siamsi: SiamsiCfg::default(),
+            theme: ThemeCfg::default(),
+            krathong: KrathongCfg::default(),
+            update: UpdateCfg::default(),
         }
     }
 }
@@ -186,6 +242,16 @@ impl Config {
         if cfg.siamsi.fortunes.is_empty() {
             cfg.siamsi.fortunes = def.siamsi.fortunes.clone();
         }
+        if cfg.krathong.blessings.is_empty() {
+            cfg.krathong.blessings = def.krathong.blessings.clone();
+        }
+        if cfg.krathong.hint_text.is_empty() {
+            cfg.krathong.hint_text = def.krathong.hint_text.clone();
+        }
+        cfg.krathong.max_floating = cfg.krathong.max_floating.clamp(1, 60);
+        if cfg.theme.mode != "krathong" {
+            cfg.theme.mode = "shrine".into();
+        }
         if cfg.numbers.digits.is_empty() {
             cfg.numbers.digits = vec![2, 3];
         }
@@ -222,10 +288,11 @@ impl Config {
         idx
     }
 
-    /// Lookup gift -> action string ("pray"/"siamsi"/"none").
+    /// Lookup gift -> action string ("pray"/"siamsi"/"none") for the active theme.
     pub fn action_for_gift(&self, name: &str, id: u64) -> String {
         let lname = name.trim().to_lowercase();
-        for (k, v) in &self.gifts {
+        let map = if self.theme.mode == "krathong" && !self.krathong.gifts.is_empty() { &self.krathong.gifts } else { &self.gifts };
+        for (k, v) in map {
             let k = k.trim();
             if (!lname.is_empty() && k.to_lowercase() == lname) || (id != 0 && k == id.to_string()) {
                 return v.to_lowercase();
@@ -250,4 +317,76 @@ pub fn base_dir() -> PathBuf {
 pub fn digit_label(n: u32) -> String {
     const L: [&str; 7] = ["", "หนึ่งตัว", "สองตัว", "สามตัว", "สี่ตัว", "ห้าตัว", "หกตัว"];
     L.get(n as usize).map(|s| s.to_string()).unwrap_or_else(|| format!("{n} ตัว"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn builtin_parses_and_is_thai_only() {
+        let c = Config::builtin();
+        assert_eq!(c.siamsi.fortunes.len(), 28);
+        assert_eq!(c.krathong.blessings.len(), 28);
+        assert_eq!(c.tiers.len(), 5);
+        // no CJK ideographs anywhere in the shipped texts
+        for t in c.siamsi.fortunes.iter().chain(c.krathong.blessings.iter()) {
+            assert!(!t.chars().any(|ch| ('\u{4E00}'..='\u{9FFF}').contains(&ch)), "CJK in {t}");
+        }
+    }
+    #[test]
+    fn tiers_thresholds() {
+        let c = Config::builtin();
+        assert_eq!(c.tier_for(0), 0);
+        assert_eq!(c.tier_for(9), 0);
+        assert_eq!(c.tier_for(10), 1);
+        assert_eq!(c.tier_for(99), 1);
+        assert_eq!(c.tier_for(100), 2);
+        assert_eq!(c.tier_for(999), 2);
+        assert_eq!(c.tier_for(1000), 3);
+        assert_eq!(c.tier_for(9999), 3);
+        assert_eq!(c.tier_for(10000), 4);
+        assert_eq!(c.tier_for(5_000_000), 4);
+        // diamonds x repeat: Rose(1) x 150 = 150 -> tier 3 (index 2)
+        assert_eq!(c.tier_for(1 * 150), 2);
+    }
+    #[test]
+    fn gift_mapping() {
+        let mut c = Config::builtin();
+        assert_eq!(c.action_for_gift("Rose", 0), "pray");
+        assert_eq!(c.action_for_gift("rose", 0), "pray");
+        assert_eq!(c.action_for_gift("", 5655), "pray");
+        assert_eq!(c.action_for_gift("TikTok", 0), "siamsi");
+        assert_eq!(c.action_for_gift("Unknown Gift", 0), "pray"); // default_action
+        c.tiktok.default_action = "none".into();
+        assert_eq!(c.action_for_gift("Unknown Gift", 0), "none");
+        // krathong mode with its own table
+        c.theme.mode = "krathong".into();
+        c.krathong.gifts.insert("Rose".into(), "siamsi".into());
+        assert_eq!(c.action_for_gift("Rose", 0), "siamsi");
+    }
+    #[test]
+    fn save_reload_roundtrip() {
+        let mut c = Config::builtin();
+        c.tiktok.username = "ทดสอบ_user".into();
+        c.window.background = "green".into();
+        c.window.layout = "full".into();
+        c.theme.mode = "krathong".into();
+        c.tiers[2].min_diamonds = 222;
+        c.gifts.insert("Galaxy".into(), "siamsi".into());
+        c.krathong.blessings = vec!["ขอให้มีความสุข".into()];
+        let dir = std::env::temp_dir().join(format!("tsl_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("config.toml");
+        c.save(&p).unwrap();
+        let r = Config::load(&p);
+        assert_eq!(r.tiktok.username, "ทดสอบ_user");
+        assert_eq!(r.window.background, "green");
+        assert_eq!(r.window.layout, "full");
+        assert_eq!(r.theme.mode, "krathong");
+        assert_eq!(r.tiers[2].min_diamonds, 222);
+        assert_eq!(r.gifts.get("Galaxy").map(|s| s.as_str()), Some("siamsi"));
+        assert_eq!(r.krathong.blessings, vec!["ขอให้มีความสุข".to_string()]);
+        assert_eq!(r.window_size(), (540.0, 960.0));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

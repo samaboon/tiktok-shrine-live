@@ -49,6 +49,11 @@ pub enum ControlCmd {
     ClickThrough(Option<bool>), // None = toggle
     Background(String),
     ClearQueue,
+    Running(bool),
+    Layout(String),
+    Theme(String),
+    Save,
+    Reload,
 }
 
 #[derive(Debug, Clone)]
@@ -201,6 +206,8 @@ fn query_to_json(q: &str) -> Value {
 ///  GET  /health
 pub struct HttpSource {
     pub bind: String,
+    /// JSON snapshot of the overlay state, served at GET /state
+    pub state: Arc<Mutex<String>>,
 }
 
 impl EventSource for HttpSource {
@@ -209,12 +216,23 @@ impl EventSource for HttpSource {
     }
     fn start(self: Box<Self>, sink: EventSink) {
         std::thread::spawn(move || {
-            let server = match tiny_http::Server::http(&self.bind) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("[http] เปิดพอร์ต {} ไม่ได้: {e}", self.bind);
-                    sink.send(Incoming::Status(format!("HTTP error: {e}")));
-                    return;
+            // retry for a few seconds: after a self-update restart the old process may still hold the port
+            let mut tries = 0;
+            let server = loop {
+                match tiny_http::Server::http(&self.bind) {
+                    Ok(s) => break s,
+                    Err(e) if tries < 30 => {
+                        tries += 1;
+                        if tries == 1 {
+                            eprintln!("[http] พอร์ต {} ยังไม่ว่าง ({e}) กำลังลองใหม่...", self.bind);
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                    }
+                    Err(e) => {
+                        eprintln!("[http] เปิดพอร์ต {} ไม่ได้: {e}", self.bind);
+                        sink.send(Incoming::Status(format!("HTTP error: {e}")));
+                        return;
+                    }
                 }
             };
             eprintln!("[http] ฟังที่ http://{}/event", self.bind);
@@ -237,6 +255,7 @@ impl EventSource for HttpSource {
                 }
                 let (code, msg) = match path.trim_end_matches('/') {
                     "/health" | "" => (200, "ok".to_string()),
+                    "/state" => (200, self.state.lock().map(|s| s.clone()).unwrap_or_default()),
                     "/control" => {
                         let mut done = vec![];
                         if let Some(c) = get_str(&v, &["click_through"]) {
@@ -255,6 +274,26 @@ impl EventSource for HttpSource {
                         if get_str(&v, &["clear"]).is_some() {
                             sink.send(Incoming::Control(ControlCmd::ClearQueue));
                             done.push("clear");
+                        }
+                        if let Some(r) = get_str(&v, &["running"]) {
+                            sink.send(Incoming::Control(ControlCmd::Running(matches!(r.as_str(), "1" | "true" | "on" | "start"))));
+                            done.push("running");
+                        }
+                        if let Some(l) = get_str(&v, &["layout"]) {
+                            sink.send(Incoming::Control(ControlCmd::Layout(l)));
+                            done.push("layout");
+                        }
+                        if let Some(m) = get_str(&v, &["mode", "theme"]) {
+                            sink.send(Incoming::Control(ControlCmd::Theme(m)));
+                            done.push("mode");
+                        }
+                        if get_str(&v, &["save"]).is_some() {
+                            sink.send(Incoming::Control(ControlCmd::Save));
+                            done.push("save");
+                        }
+                        if get_str(&v, &["reload"]).is_some() {
+                            sink.send(Incoming::Control(ControlCmd::Reload));
+                            done.push("reload");
                         }
                         (200, format!("ok {:?}", done))
                     }

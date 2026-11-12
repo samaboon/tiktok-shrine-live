@@ -1,28 +1,94 @@
-//! Overlay app: event queue, animation timeline, fireworks, settings window.
+//! Overlay app: themes, event queue, animation timeline, camera, fireworks, settings window.
 use crate::config::{digit_label, Config};
 use crate::events::{restart_bridge, Action, BridgeCtl, ControlCmd, DirectIn, GiftIn, Incoming};
+use crate::krathong as kr;
 use crate::scene::*;
 use egui::{Align2, Color32, Key, Pos2, Vec2, ViewportBuilder, ViewportCommand, ViewportId, WindowLevel};
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Receiver;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+/// Scene themes. Add a variant + its timeline/drawing to support more modes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Theme {
+    /// ไหว้พระขอเลข / เสี่ยงเซียมซี
+    Shrine,
+    /// ลอยกระทง
+    Krathong,
+}
+impl Theme {
+    pub fn from_key(s: &str) -> Theme {
+        if s.trim().eq_ignore_ascii_case("krathong") || s.contains("กระทง") { Theme::Krathong } else { Theme::Shrine }
+    }
+    pub fn key(self) -> &'static str {
+        match self {
+            Theme::Shrine => "shrine",
+            Theme::Krathong => "krathong",
+        }
+    }
+    pub fn action_label(self, a: &str) -> &'static str {
+        match (self, a) {
+            (Theme::Shrine, "pray") => "ไหว้พระขอเลข",
+            (Theme::Shrine, "siamsi") => "เสี่ยงเซียมซี",
+            (Theme::Krathong, "pray") => "ลอยกระทงขอเลข",
+            (Theme::Krathong, "siamsi") => "อธิษฐานรับคำอวยพร",
+            _ => "ไม่ทำอะไร",
+        }
+    }
+}
+
+#[derive(Clone)]
+struct StickPhys {
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
+    ang: f32,
+    va: f32,
+    landed: Option<f32>,
+}
+
+#[derive(Clone)]
+pub struct Appearance {
+    pub shirt: Color32,
+    pub pants: Color32,
+    pub hair: Color32,
+    pub style: u8,
+    pub seed: f32,
+}
 
 pub struct Show {
     pub action: Action,
+    pub theme: Theme,
     pub user: String,
     pub tier: usize,
     pub tier_name: String,
     pub t: f32,
     pub numbers: Vec<(String, String)>,
-    pub stick: usize,
-    pub fortune: String,
-    pub shirt: Color32,
-    pub pants: Color32,
-    bursts: Vec<(f32, u8)>, // (time since reveal, kind)
+    pub stick_no: usize,
+    pub text: String,
+    pub look: Appearance,
+    lane_y: f32,
+    bursts: Vec<(f32, u8)>,
     fired: usize,
     trail_acc: f32,
+    wish_acc: f32,
+    digit_done: Vec<Vec<bool>>,
+    stick: Option<StickPhys>,
+    released: bool,
+}
+
+pub struct Floating {
+    x: f32,
+    y: f32,
+    vx: f32,
+    age: f32,
+    fade: Option<f32>,
+    tier: usize,
+    name: String,
+    seed: f32,
 }
 
 /// Screenshot automation (CLI --shot-*)
@@ -34,6 +100,14 @@ pub struct ShotPlan {
     pub requested: bool,
     pub done: Arc<AtomicBool>,
     pub frames_after: u32,
+}
+
+struct Recorder {
+    dir: PathBuf,
+    start: f32,
+    end: f32,
+    requested: usize,
+    saved: Arc<AtomicUsize>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -51,8 +125,14 @@ pub struct ShrineApp {
     queue: VecDeque<Show>,
     current: Option<Show>,
     particles: Vec<Particle>,
+    floating: Vec<Floating>,
     rng: fastrand::Rng,
     time: f32,
+    scene_time: f32,
+    idle_for: f32,
+    scene_alpha: f32,
+    gap: f32,
+    shake: f32,
     status: String,
     pub running: bool,
     settings_open: bool,
@@ -62,12 +142,21 @@ pub struct ShrineApp {
     sprites: Option<Sprites>,
     assets_dir: PathBuf,
     shot: Option<ShotPlan>,
+    rec: Option<Recorder>,
     sim_dt: Option<f32>,
+    state: Arc<Mutex<String>>,
+    frame: u64,
+    shows_started: u64,
+    shows_finished: u64,
+    gifts_received: u64,
     // settings edit buffers
     gift_rows: Vec<(String, String)>,
+    gift_rows_theme: Theme,
     fortunes_text: String,
+    blessings_text: String,
     flash_msg: (String, f32),
     pos_edit: Option<(f32, f32)>,
+    pub updater: crate::updater::Updater,
 }
 
 pub struct AppInit {
@@ -81,7 +170,14 @@ pub struct AppInit {
     pub seed: Option<u64>,
     pub open_settings: bool,
     pub start_stopped: bool,
+    pub state: Arc<Mutex<String>>,
+    pub theme: Option<String>,
+    pub record: Option<(PathBuf, f32, f32, u32)>,
+    pub updater: crate::updater::Updater,
 }
+
+const WALK: f32 = 3.2;
+const OUT: f32 = 2.2;
 
 impl ShrineApp {
     pub fn new(init: AppInit) -> Self {
@@ -89,20 +185,33 @@ impl ShrineApp {
             Some(s) => fastrand::Rng::with_seed(s),
             None => fastrand::Rng::new(),
         };
-        let sim_dt = init.shot.as_ref().map(|_| 1.0 / 60.0);
+        let mut cfg = init.cfg;
+        if let Some(t) = &init.theme {
+            cfg.theme.mode = Theme::from_key(t).key().into();
+        }
+        let sim_dt = if let Some((_, _, _, fps)) = &init.record { Some(1.0 / *fps as f32) } else { init.shot.as_ref().map(|_| 1.0 / 60.0) };
         let settings_tab = init.shot.as_ref().and_then(|s| s.settings_tab).unwrap_or(0);
+        let theme = Theme::from_key(&cfg.theme.mode);
         let mut app = Self {
-            gift_rows: init.cfg.gifts.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-            fortunes_text: init.cfg.siamsi.fortunes.join("\n"),
-            cfg: init.cfg,
+            gift_rows: vec![],
+            gift_rows_theme: theme,
+            fortunes_text: cfg.siamsi.fortunes.join("\n"),
+            blessings_text: cfg.krathong.blessings.join("\n"),
+            cfg,
             cfg_path: init.cfg_path,
             rx: init.rx,
             bridge: init.bridge,
             queue: VecDeque::new(),
             current: None,
             particles: vec![],
+            floating: vec![],
             rng,
             time: 0.0,
+            scene_time: 0.0,
+            idle_for: 10.0,
+            scene_alpha: 0.0,
+            gap: 0.0,
+            shake: 0.0,
             status: String::new(),
             running: !init.start_stopped,
             settings_open: init.open_settings,
@@ -112,10 +221,18 @@ impl ShrineApp {
             sprites: None,
             assets_dir: init.assets_dir,
             shot: init.shot,
+            rec: init.record.map(|(dir, start, end, _)| Recorder { dir, start, end, requested: 0, saved: Arc::new(AtomicUsize::new(0)) }),
             sim_dt,
+            state: init.state,
+            frame: 0,
+            shows_started: 0,
+            shows_finished: 0,
+            gifts_received: 0,
             flash_msg: (String::new(), 0.0),
             pos_edit: None,
+            updater: init.updater,
         };
+        app.load_gift_rows();
         for (a, tier, user) in init.demo {
             let d = app.tier_min(tier).max(1);
             app.enqueue(a, &user, d, tier);
@@ -123,17 +240,37 @@ impl ShrineApp {
         app
     }
 
+    pub fn theme(&self) -> Theme {
+        Theme::from_key(&self.cfg.theme.mode)
+    }
+
+    fn load_gift_rows(&mut self) {
+        let th = self.theme();
+        let map = if th == Theme::Krathong && !self.cfg.krathong.gifts.is_empty() { &self.cfg.krathong.gifts } else { &self.cfg.gifts };
+        self.gift_rows = map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        self.gift_rows_theme = th;
+    }
+
     fn tier_min(&self, tier: usize) -> u64 {
         self.cfg.tiers.get(tier).map(|t| t.min_diamonds).unwrap_or(1)
+    }
+
+    fn vh(&self) -> f32 {
+        let (w, h) = self.cfg.window_size();
+        h / w * VW
+    }
+    fn ground_of(&self, th: Theme) -> f32 {
+        match th {
+            Theme::Shrine => ground_for(self.vh()),
+            Theme::Krathong => kr::bank_y(self.vh()),
+        }
     }
 
     fn enqueue(&mut self, action: Action, user: &str, diamonds: u64, tier_override: usize) {
         let tier = if tier_override < 99 { tier_override.min(self.cfg.tiers.len().saturating_sub(1)) } else { self.cfg.tier_for(diamonds) };
         let tier_name = self.cfg.tiers.get(tier).map(|t| t.name.clone()).unwrap_or_default();
-        let numbers = self
-            .cfg
-            .numbers
-            .digits
+        let digits = self.cfg.numbers.digits.clone();
+        let numbers: Vec<(String, String)> = digits
             .iter()
             .map(|&d| {
                 let d = d.clamp(1, 6);
@@ -141,45 +278,67 @@ impl ShrineApp {
                 (digit_label(d), format!("{:0width$}", self.rng.u32(0..max), width = d as usize))
             })
             .collect();
-        let n = self.cfg.siamsi.fortunes.len().max(1);
-        let stick = self.rng.usize(0..n);
-        let fortune = self.cfg.siamsi.fortunes.get(stick).cloned().unwrap_or_default();
-        let hue = self.rng.f32();
-        let shirt = hsv(hue, 0.55, 0.9);
-        let pants = hsv((hue + 0.5).fract(), 0.4, 0.35);
-        let bursts = burst_plan(tier, &mut self.rng);
+        let theme = self.theme();
+        let list = if theme == Theme::Krathong { self.cfg.krathong.blessings.clone() } else { self.cfg.siamsi.fortunes.clone() };
+        let pick = self.rng.usize(0..list.len().max(1));
+        let text = list.get(pick).cloned().unwrap_or_default();
         let user = if user.trim().is_empty() { "ผู้ชม".to_string() } else { truncate(user.trim(), 18) };
+        let look = appearance_for(&user);
+        let bursts = burst_plan(tier, &mut self.rng);
+        let vh = self.vh();
+        let wt = kr::water_top(vh);
+        let lane_y = lerp(wt + 50.0, vh - 70.0, self.rng.f32());
+        let digit_done = numbers.iter().map(|(_, s)| vec![false; s.chars().count()]).collect();
         self.queue.push_back(Show {
             action,
+            theme,
             user,
             tier,
             tier_name,
             t: 0.0,
             numbers,
-            stick: stick + 1,
-            fortune,
-            shirt,
-            pants,
+            stick_no: pick + 1,
+            text,
+            look,
+            lane_y,
             bursts,
             fired: 0,
             trail_acc: 0.0,
+            wish_acc: 0.0,
+            digit_done,
+            stick: None,
+            released: false,
         });
     }
 
-    fn handle_incoming(&mut self, ev: Incoming) {
+    fn handle_incoming(&mut self, ev: Incoming, ctx: &egui::Context) {
         match ev {
             Incoming::Status(s) => self.status = s,
             Incoming::Control(c) => match c {
                 ControlCmd::ClickThrough(v) => self.cfg.window.click_through = v.unwrap_or(!self.cfg.window.click_through),
                 ControlCmd::Background(b) => self.cfg.window.background = b,
                 ControlCmd::ClearQueue => self.queue.clear(),
+                ControlCmd::Running(r) => {
+                    self.running = r;
+                    self.reconnect();
+                }
+                ControlCmd::Layout(l) => self.cfg.window.layout = if l == "full" { "full".into() } else { "top".into() },
+                ControlCmd::Theme(m) => {
+                    self.sync_edit_buffers();
+                    self.cfg.theme.mode = Theme::from_key(&m).key().into();
+                    self.load_gift_rows();
+                }
+                ControlCmd::Save => self.save_config(ctx),
+                ControlCmd::Reload => self.reload_config(),
             },
             Incoming::Direct(DirectIn { action, user, diamonds, .. }) => {
+                self.gifts_received += 1;
                 if self.running {
                     self.enqueue(action, &user, diamonds, 99)
                 }
             }
             Incoming::Gift(GiftIn { user, gift_id, gift_name, diamonds, repeat }) => {
+                self.gifts_received += 1;
                 if !self.running {
                     return;
                 }
@@ -198,304 +357,809 @@ impl ShrineApp {
         }
     }
 
-    // timeline (seconds of show-time)
+    fn reload_config(&mut self) {
+        self.cfg = Config::load(&self.cfg_path);
+        self.load_gift_rows();
+        self.fortunes_text = self.cfg.siamsi.fortunes.join("\n");
+        self.blessings_text = self.cfg.krathong.blessings.join("\n");
+        self.flash("โหลดการตั้งค่าใหม่แล้ว".into());
+    }
+
+    /// timeline (seconds of show-time): walk-in, act, reveal, walk-out
     fn durations(&self, s: &Show) -> (f32, f32, f32, f32) {
         let reveal = self.cfg.timing.reveal_seconds.max(1.5) + s.tier as f32 * 0.5;
-        match s.action {
-            Action::Pray => (3.0, 2.8, reveal, 1.8),
-            Action::Siamsi => (3.0, 4.2, reveal + 0.5, 1.8),
+        match (s.theme, s.action) {
+            (Theme::Shrine, Action::Pray) => (WALK, 3.4, reveal, OUT),
+            (Theme::Shrine, Action::Siamsi) => (WALK, 6.4, reveal + 0.6, OUT),
+            (Theme::Krathong, Action::Pray) => (WALK, kr_push_end(Action::Pray) + 0.5, reveal, OUT),
+            (Theme::Krathong, Action::Siamsi) => (WALK, kr_push_end(Action::Siamsi) + 0.5, reveal + 0.6, OUT),
+        }
+    }
+    fn target_x(th: Theme) -> f32 {
+        match th {
+            Theme::Shrine => PRAY_X,
+            Theme::Krathong => kr::KNEEL_X,
+        }
+    }
+    fn char_scale(th: Theme) -> f32 {
+        match th {
+            Theme::Shrine => 1.2,
+            Theme::Krathong => 1.1,
         }
     }
 
-    fn update(&mut self, dt: f32) {
-        self.time += dt;
+    fn active(&self) -> bool {
+        self.current.is_some() || !self.queue.is_empty() || self.gap > 0.0 || self.particles.iter().any(|p| !matches!(p.kind, 3 | 4 | 8))
+    }
+
+    // ------------------------------------------------------------------ simulation
+    fn update(&mut self, dt_real: f32) {
+        let speed = self.cfg.timing.speed.clamp(0.25, 4.0);
+        let dt = dt_real * speed;
+        self.time += dt_real;
+        let active = self.active();
+        if active {
+            self.idle_for = 0.0;
+        } else {
+            self.idle_for += dt_real;
+        }
+        let idle_mode = self.cfg.window.idle.clone();
+        let freeze = !active && idle_mode != "ambient" && self.idle_for >= 1.2;
+        if !freeze {
+            self.scene_time += dt;
+        }
+        // hidden idle: fade whole world out / in
+        let target_alpha = if idle_mode == "hidden" && !active { 0.0 } else { 1.0 };
+        let rate = if target_alpha > self.scene_alpha { 3.0 } else { 1.2 };
+        self.scene_alpha += (target_alpha - self.scene_alpha).clamp(-rate * dt_real, rate * dt_real);
+        self.shake *= (-6.0 * dt_real).exp();
+
+        // queue / transitions
         if self.current.is_none() {
-            self.current = self.queue.pop_front();
+            if self.gap > 0.0 {
+                self.gap -= dt;
+            } else if !self.queue.is_empty() && (idle_mode != "hidden" || self.scene_alpha > 0.95) {
+                let s = self.queue.pop_front().unwrap();
+                self.shows_started += 1;
+                self.current = Some(s);
+                self.entry_poof();
+            }
         }
-        let speed = self.cfg.timing.speed;
-        let mut finished = false;
-        let mut spawn: Vec<(u8, usize)> = vec![];
-        let mut trail: Option<(f32, usize)> = None;
-        if let Some(s) = &self.current {
-            let (w, a, r, o) = self.durations(s);
-            let _ = o;
-            let _ = (w, a, r);
-        }
+
         if let Some(mut s) = self.current.take() {
             let (w, a, r, o) = self.durations(&s);
-            s.t += dt * speed;
-            let rt = s.t - w - a;
-            while s.fired < s.bursts.len() && rt >= s.bursts[s.fired].0 {
-                spawn.push((s.bursts[s.fired].1, s.tier));
-                s.fired += 1;
-            }
-            if s.tier >= 2 && s.t < w {
-                s.trail_acc += dt * (s.tier as f32 * 10.0);
-                if s.trail_acc >= 1.0 {
-                    s.trail_acc = 0.0;
-                    trail = Some((lerp(-120.0, PRAY_X, s.t / w), s.tier));
-                }
-            }
+            s.t += dt;
+            self.step_show(&mut s, dt);
             if s.t >= w + a + r + o {
-                finished = true;
-            }
-            if !finished {
+                self.shows_finished += 1;
+                self.gap = 0.7;
+            } else {
                 self.current = Some(s);
             }
         }
-        if let Some((x, tier)) = trail {
-            let g = self.ground_v();
-            for _ in 0..tier {
+
+        let theme = self.theme();
+        if active || idle_mode == "ambient" {
+            self.spawn_ambient(dt, theme);
+        } else if idle_mode == "still" {
+            // ambient motes/petals fade away so the idle frame is clean
+            for p in &mut self.particles {
+                if matches!(p.kind, 3 | 4) {
+                    p.life = p.life.min(0.5);
+                }
+            }
+        }
+        if !freeze {
+            self.step_particles(dt);
+            let max_f = self.cfg.krathong.max_floating.max(1);
+            let life = self.cfg.krathong.float_seconds.max(10.0);
+            for f in &mut self.floating {
+                f.age += dt;
+                f.vx = (f.vx * (-0.6 * dt).exp()).max(7.0);
+                f.x += f.vx * dt;
+                if f.fade.is_none() && (f.age > life || f.x > VW - 50.0) {
+                    f.fade = Some(0.0);
+                }
+                if let Some(fd) = &mut f.fade {
+                    *fd += dt;
+                }
+            }
+            let live = self.floating.iter().filter(|f| f.fade.is_none()).count();
+            if live > max_f {
+                let mut extra = live - max_f;
+                for f in self.floating.iter_mut() {
+                    if extra == 0 {
+                        break;
+                    }
+                    if f.fade.is_none() {
+                        f.fade = Some(0.0);
+                        extra -= 1;
+                    }
+                }
+            }
+            self.floating.retain(|f| f.fade.map(|x| x < 2.0).unwrap_or(true));
+        }
+        if self.flash_msg.1 > 0.0 {
+            self.flash_msg.1 -= dt_real;
+        }
+    }
+
+    fn entry_poof(&mut self) {
+        let Some(s) = self.current.as_ref() else { return };
+        let g = self.ground_of(s.theme);
+        let tier = s.tier;
+        for _ in 0..(10 + tier * 8) {
+            let a = self.rng.f32() * std::f32::consts::TAU;
+            let mut p = Particle::new(1, Pos2::new(10.0, g - 60.0 - self.rng.f32() * 160.0), Vec2::new(a.cos().abs() * 140.0, a.sin() * 80.0), 1.0, if tier >= 2 { GOLD } else { Color32::WHITE }, 3.5);
+            p.drag = 2.0;
+            p.rot = self.rng.f32() * 10.0;
+            self.particles.push(p);
+        }
+    }
+
+    fn step_show(&mut self, s: &mut Show, dt: f32) {
+        let (w, a_d, _r, _o) = self.durations(s);
+        let t = s.t;
+        let a = t - w;
+        let rt = a - a_d;
+        let g = self.ground_of(s.theme);
+        // fireworks schedule (relative to reveal)
+        while s.fired < s.bursts.len() && rt >= s.bursts[s.fired].0 {
+            let kind = s.bursts[s.fired].1;
+            self.spawn_effect(kind, s.tier, s.theme);
+            s.fired += 1;
+        }
+        // gold trail while walking (tier 3+)
+        if s.tier >= 2 && t < w {
+            s.trail_acc += dt * (s.tier as f32 * 12.0);
+            while s.trail_acc >= 1.0 {
+                s.trail_acc -= 1.0;
+                let x = self.walk_x(s);
                 let c = if self.rng.bool() { GOLD } else { Color32::WHITE };
-                self.particles.push(Particle { pos: Pos2::new(x - 30.0 + self.rng.f32() * 30.0, g - 20.0 - self.rng.f32() * 200.0), vel: Vec2::new(-30.0, -20.0), life: 1.0, max: 1.0, color: c, size: 4.0, kind: 1, tier });
+                let mut p = Particle::new(1, Pos2::new(x - 20.0 - self.rng.f32() * 30.0, g - 10.0 - self.rng.f32() * 180.0), Vec2::new(-20.0, -25.0), 1.1, c, 3.5);
+                p.rot = self.rng.f32() * 10.0;
+                self.particles.push(p);
             }
         }
-        for (kind, tier) in spawn {
-            self.spawn_effect(kind, tier);
+        // top tier: golden sparkle rain
+        if s.tier >= 4 && self.rng.f32() < 30.0 * dt {
+            let mut p = Particle::new(1, Pos2::new(self.rng.f32() * VW, -10.0), Vec2::new(0.0, 110.0 + self.rng.f32() * 80.0), 5.0, GOLD, 3.5);
+            p.rot = self.rng.f32() * 10.0;
+            self.particles.push(p);
         }
-        // top tier: sparkle rain during whole show
-        if let Some(s) = &self.current {
-            if s.tier >= 4 && self.rng.f32() < 0.6 {
-                let x = self.rng.f32() * VW;
-                self.particles.push(Particle { pos: Pos2::new(x, -10.0), vel: Vec2::new(0.0, 120.0 + self.rng.f32() * 80.0), life: 4.0, max: 4.0, color: GOLD, size: 4.0, kind: 1, tier: 4 });
+        // number reveal: per-digit stop events -> sparkle burst + flash
+        if s.action == Action::Pray && rt >= 0.0 {
+            let geo = self.pray_geo(s);
+            let mut hits = vec![];
+            for (i, row) in s.digit_done.iter_mut().enumerate() {
+                for (j, done) in row.iter_mut().enumerate() {
+                    if !*done && rt >= digit_stop(i, j) {
+                        *done = true;
+                        hits.push((geo.digit_x[i][j], geo.row_y[i]));
+                    }
+                }
+            }
+            for (x, y) in hits {
+                let mut fl = Particle::new(7, Pos2::new(x, y), Vec2::ZERO, 0.35, Color32::from_rgb(255, 240, 180), 90.0);
+                fl.max = 0.35;
+                self.particles.push(fl);
+                for _ in 0..(12 + s.tier * 4) {
+                    let ang = self.rng.f32() * std::f32::consts::TAU;
+                    let sp = 120.0 + self.rng.f32() * 160.0;
+                    let mut p = Particle::new(1, Pos2::new(x, y), Vec2::new(ang.cos(), ang.sin()) * sp, 0.9, if self.rng.bool() { GOLD } else { Color32::WHITE }, 3.0 + s.tier as f32 * 0.5);
+                    p.drag = 3.0;
+                    p.grav = 60.0;
+                    p.rot = self.rng.f32() * 10.0;
+                    self.particles.push(p);
+                }
             }
         }
-        // particles
+        match s.theme {
+            Theme::Shrine => {
+                if s.action == Action::Siamsi {
+                    self.step_stick(s, dt, g);
+                }
+            }
+            Theme::Krathong => {
+                let push_end = kr_push_end(s.action);
+                if !s.released && a >= push_end {
+                    s.released = true;
+                    let x0 = kr::BANK_EDGE + 110.0;
+                    self.floating.push(Floating { x: x0, y: s.lane_y, vx: 70.0, age: 0.0, fade: None, tier: s.tier, name: s.user.clone(), seed: s.look.seed });
+                    for _ in 0..14 {
+                        let ang = -self.rng.f32() * std::f32::consts::PI;
+                        let mut p = Particle::new(5, Pos2::new(x0, s.lane_y), Vec2::new(ang.cos() * 90.0, ang.sin() * 70.0), 0.6, Color32::from_rgb(190, 220, 255), 3.0);
+                        p.grav = 300.0;
+                        self.particles.push(p);
+                    }
+                    if s.tier >= 2 {
+                        let n = [0, 0, 2, 4, 9][s.tier.min(4)];
+                        for i in 0..n {
+                            let mut p = Particle::new(8, Pos2::new(kr::KNEEL_X + 60.0 + i as f32 * 26.0 - n as f32 * 8.0, g - 150.0 - self.rng.f32() * 40.0), Vec2::new(self.rng.f32() * 24.0 - 6.0, -(30.0 + self.rng.f32() * 24.0)), 18.0, GOLD, 1.0 + self.rng.f32() * 0.35);
+                            p.rot = self.rng.f32() * 10.0;
+                            self.particles.push(p);
+                        }
+                    }
+                }
+                // wishing sparkles rising from the joined hands
+                let (ws, we) = kr_wish_window(s.action);
+                if a > ws + 0.4 && a < we {
+                    s.wish_acc += dt * if s.action == Action::Siamsi { 26.0 } else { 12.0 };
+                    while s.wish_acc >= 1.0 {
+                        s.wish_acc -= 1.0;
+                        let (x, pose) = self.animate(s);
+                        let rig = solve_rig(x, g, &pose, Self::char_scale(s.theme));
+                        let hd = rig.arms[1].1;
+                        let mut p = Particle::new(1, Pos2::new(hd.0, hd.1 - 20.0), Vec2::new(self.rng.f32() * 40.0 - 20.0, -(60.0 + self.rng.f32() * 60.0)), 1.6, if self.rng.bool() { GOLD } else { Color32::from_rgb(255, 210, 235) }, 3.5);
+                        p.rot = self.rng.f32() * 10.0;
+                        self.particles.push(p);
+                    }
+                }
+            }
+        }
+    }
+
+    fn step_stick(&mut self, s: &mut Show, dt: f32, g: f32) {
+        let a = s.t - WALK;
+        if s.stick.is_none() && a >= POP {
+            let (x, pose) = self.animate(s);
+            let k = Self::char_scale(s.theme);
+            let rig = solve_rig(x, g, &pose, k);
+            let hd = rig.arms[1].1;
+            let f = pose.facing;
+            let sc = 0.75 * k;
+            let ang = 0.35 * f;
+            let base = (hd.0 + 6.0 * k * f, hd.1 + 30.0 * k);
+            let (sn, cs) = ang.sin_cos();
+            let ly = -230.0 * sc;
+            let pos = (base.0 - ly * sn, base.1 + ly * cs);
+            s.stick = Some(StickPhys { x: pos.0, y: pos.1, vx: 105.0 * f, vy: -520.0, ang: -std::f32::consts::FRAC_PI_2 + ang, va: 9.0 * f, landed: None });
+        }
+        let mut dust = None;
+        if let Some(st) = &mut s.stick {
+            if st.landed.is_none() {
+                st.vy += 1500.0 * dt;
+                st.x += st.vx * dt;
+                st.y += st.vy * dt;
+                st.ang += st.va * dt;
+                let floor = g - 8.0;
+                if st.y >= floor {
+                    st.y = floor;
+                    if st.vy > 140.0 {
+                        st.vy = -st.vy * 0.42;
+                        st.vx *= 0.6;
+                        st.va *= -0.5;
+                    } else {
+                        st.vy = 0.0;
+                        st.landed = Some(a);
+                    }
+                    dust = Some((st.x, floor));
+                }
+            } else {
+                st.vx *= (-6.0 * dt).exp();
+                st.x += st.vx * dt;
+                // settle lying flat on the floor
+                let half = 0.0;
+                let target = ((st.ang - half) / std::f32::consts::PI).round() * std::f32::consts::PI + half;
+                st.ang += (target - st.ang) * (1.0 - (-10.0 * dt).exp());
+            }
+        }
+        if let Some((x, y)) = dust {
+            for _ in 0..8 {
+                let ang = -self.rng.f32() * std::f32::consts::PI;
+                let mut p = Particle::new(5, Pos2::new(x, y), Vec2::new(ang.cos() * 70.0, ang.sin() * 40.0), 0.5, Color32::from_rgb(230, 210, 170), 4.0);
+                p.drag = 3.0;
+                self.particles.push(p);
+            }
+        }
+    }
+
+    fn walk_x(&self, s: &Show) -> f32 {
+        lerp(-150.0, Self::target_x(s.theme), smooth(s.t / WALK))
+    }
+
+    /// Character position + pose for the current show time.
+    fn animate(&self, s: &Show) -> (f32, Pose) {
+        let (w, a_d, r, o) = self.durations(s);
+        let t = s.t;
+        let st = self.scene_time;
+        let tx = Self::target_x(s.theme);
+        let mut p = Pose::default();
+        p.breath = (st * 2.4 + s.look.seed).sin();
+        p.blink = blink(st, s.look.seed);
+        let x;
+        if t < w {
+            let u = t / w;
+            x = lerp(-150.0, tx, smooth(u));
+            let spd = 6.0 * u * (1.0 - u);
+            p.walk = (spd * 1.25).clamp(0.0, 1.0);
+            p.phase = (x + 150.0) * std::f32::consts::TAU / 95.0;
+            p.squash = -0.6 * p.walk * (2.0 * p.phase).sin().abs() + 0.25 * p.walk;
+            p.cape_lag = 18.0 * p.walk;
+            if s.theme == Theme::Krathong {
+                p.hands = 1.0;
+                p.carry = 1.0;
+            }
+        } else if t < w + a_d + r {
+            x = tx;
+            let a = t - w;
+            // anticipation (small rise) then kneel with overshoot + landing squash
+            p.kneel = ease_out_back((a - 0.1) / 0.55);
+            p.squash = if a < 0.15 { -0.6 * (a / 0.15 * std::f32::consts::PI).sin() } else if a > 0.5 && a < 0.85 { 0.8 * ((a - 0.5) / 0.35 * std::f32::consts::PI).sin() } else { 0.0 };
+            p.cape_lag = 18.0 * (1.0 - smooth(a / 0.8)) * (a * 9.0).cos();
+            match (s.theme, s.action) {
+                (Theme::Shrine, Action::Pray) => {
+                    p.hands = smooth((a - 0.45) / 0.45);
+                    p.raise = ease_in_out((a - 0.95) / 0.5) * (1.0 - 0.7 * smooth((a - 3.0) / 0.4));
+                    p.bow = ease_in_out((a - 1.5) / 0.6) * (1.0 - ease_in_out((a - 2.5) / 0.5));
+                    p.expr = if a > 0.9 { 1 } else { 0 };
+                    if a > a_d {
+                        p.raise = 0.3;
+                        p.expr = 2;
+                    }
+                }
+                (Theme::Shrine, Action::Siamsi) => {
+                    p.hands = smooth((a - 0.3) / 0.4);
+                    let env = smooth((a - 0.7) / 0.3) * (1.0 - smooth((a - 3.2) / 0.3));
+                    let tilt = ((a - 0.7) * std::f32::consts::TAU * 3.0).sin() * 0.24 * env;
+                    let lift = if a < 2.7 { -1.0 } else if a < POP { smooth((a - 2.7) / (POP - 2.7)) } else { -2.0 };
+                    p.hold_cyl = Some((tilt, if env > 0.01 { a } else { 0.0 }, lift));
+                    p.bow = 0.12 + 0.1 * env * ((a - 0.7) * std::f32::consts::TAU * 3.0).cos().abs();
+                    p.expr = if a < POP { 1 } else { 2 };
+                }
+                (Theme::Krathong, act) => {
+                    let (ws, we) = kr_wish_window(act);
+                    let pe = kr_push_end(act);
+                    p.hands = 1.0;
+                    // carry -> place -> wai/wish -> reach -> push -> chest
+                    if a < 0.6 {
+                        p.carry = 1.0;
+                    } else if a < 1.1 {
+                        p.carry = 1.0;
+                        p.reach = Some((self.kr_bank_spot(), smooth((a - 0.6) / 0.5)));
+                    } else if a < ws {
+                        p.reach = Some((self.kr_bank_spot(), 1.0 - smooth((a - 1.1) / 0.3)));
+                    } else if a < we {
+                        p.raise = ease_in_out((a - ws) / 0.5);
+                        p.bow = 0.6 * ease_in_out((a - ws - 0.4) / 0.4) * (1.0 - ease_in_out((a - we + 0.5) / 0.4));
+                        p.expr = 1;
+                    } else if a < pe {
+                        let u = (a - we) / (pe - we);
+                        let kp = self.kr_pos(s, a);
+                        p.reach = Some((kp, smooth(u * 3.0) * (1.0 - smooth((u - 0.7) / 0.3))));
+                    } else {
+                        p.raise = 0.2;
+                        p.expr = 2;
+                    }
+                }
+            }
+        } else {
+            let ot = t - w - a_d - r;
+            p.kneel = 1.0 - ease_out_cubic(ot / 0.35);
+            p.facing = if ot > 0.18 { -1.0 } else { 1.0 };
+            let u = ((ot - 0.3) / (o - 0.3)).clamp(0.0, 1.0);
+            let eu = u * u * (1.5 - 0.5 * u);
+            x = lerp(tx, -170.0, eu);
+            p.walk = smooth(u * 4.0);
+            p.phase = (tx - x) * std::f32::consts::TAU / 95.0;
+            p.squash = -0.6 * p.walk * (2.0 * p.phase).sin().abs() + 0.25 * p.walk;
+            p.cape_lag = 18.0 * p.walk;
+            p.expr = if ot < 0.3 { 2 } else { 0 };
+        }
+        (x, p)
+    }
+
+    fn kr_bank_spot(&self) -> (f32, f32) {
+        (kr::KNEEL_X + 80.0, kr::bank_y(self.vh()) - 4.0)
+    }
+
+    /// krathong position while it is still handled by the character
+    fn kr_pos(&self, s: &Show, a: f32) -> (f32, f32) {
+        let bank = self.kr_bank_spot();
+        let (_ws, we) = kr_wish_window(s.action);
+        let pe = kr_push_end(s.action);
+        if a < we {
+            return bank;
+        }
+        let u = smooth((a - we - 0.25) / (pe - we - 0.25));
+        let end = (kr::BANK_EDGE + 110.0, s.lane_y);
+        let x = lerp(bank.0, end.0, u);
+        let y = lerp(bank.1, end.1, u) - (u * std::f32::consts::PI).sin() * 30.0;
+        (x, y)
+    }
+
+    fn step_particles(&mut self, dt: f32) {
         let mut explode: Vec<(Pos2, usize)> = vec![];
+        let mut crackles: Vec<Pos2> = vec![];
+        let mut trails: Vec<Pos2> = vec![];
+        let time = self.time;
         for p in &mut self.particles {
             p.life -= dt;
-            if p.kind == 2 {
-                p.vel.y += 600.0 * dt;
-                if p.vel.y > -40.0 {
-                    p.life = 0.0;
-                    explode.push((p.pos, p.tier));
+            match p.kind {
+                2 => {
+                    p.vel.y += 600.0 * dt;
+                    trails.push(p.pos);
+                    if p.vel.y > -30.0 {
+                        p.life = 0.0;
+                        explode.push((p.pos, p.tier));
+                    }
                 }
-            } else if p.kind == 0 {
-                p.vel.y += 160.0 * dt;
-                p.vel *= 1.0 - 1.2 * dt;
-            } else {
-                p.vel *= 1.0 - 0.5 * dt;
+                3 => {
+                    p.vel.x += (time * 1.7 + p.rot).sin() * 30.0 * dt;
+                    p.rot += p.vrot * dt;
+                }
+                8 => {
+                    p.vel.x += (time * 0.5 + p.rot).sin() * 6.0 * dt;
+                }
+                _ => {}
+            }
+            p.vel.y += p.grav * dt;
+            if p.drag > 0.0 {
+                p.vel *= (-p.drag * dt).exp();
             }
             p.pos += p.vel * dt;
+            if p.life <= 0.0 && p.crackle {
+                crackles.push(p.pos);
+            }
         }
-        self.particles.retain(|p| p.life > 0.0 && p.pos.y < 4000.0);
+        self.particles.retain(|p| p.life > 0.0 && p.pos.y < 4000.0 && p.pos.y > -400.0);
+        for pos in trails {
+            let mut e = Particle::new(5, pos, Vec2::new(self.rng.f32() * 20.0 - 10.0, 20.0), 0.45, Color32::from_rgb(255, 190, 90), 3.0);
+            e.grav = 40.0;
+            self.particles.push(e);
+        }
+        for pos in crackles {
+            for _ in 0..4 {
+                let a = self.rng.f32() * std::f32::consts::TAU;
+                let mut p = Particle::new(0, pos, Vec2::new(a.cos(), a.sin()) * 60.0, 0.25, Color32::WHITE, 1.6);
+                p.drag = 2.0;
+                self.particles.push(p);
+            }
+        }
         for (pos, tier) in explode {
             self.explode(pos, tier);
         }
-        if finished {
-            self.current = self.queue.pop_front();
-        }
-        if self.flash_msg.1 > 0.0 {
-            self.flash_msg.1 -= dt;
+        if self.particles.len() > 6000 {
+            let n = self.particles.len() - 6000;
+            self.particles.drain(0..n);
         }
     }
 
-    fn ground_v(&self) -> f32 {
-        let (w, h) = self.cfg.window_size();
-        let vh = h / w * VW;
-        vh - 110.0_f32.min(vh * 0.12)
+    fn spawn_ambient(&mut self, dt: f32, theme: Theme) {
+        let vh = self.vh();
+        let busy = self.current.as_ref().map(|s| s.tier).unwrap_or(0);
+        match theme {
+            Theme::Shrine => {
+                let g = ground_for(vh);
+                if self.rng.f32() < 3.0 * dt {
+                    let mut p = Particle::new(4, Pos2::new(SHRINE_X + (self.rng.f32() - 0.5) * 420.0, g - 40.0 - self.rng.f32() * 340.0), Vec2::new(self.rng.f32() * 10.0 - 5.0, -(6.0 + self.rng.f32() * 12.0)), 4.0 + self.rng.f32() * 3.0, Color32::from_rgb(255, 230, 160), 3.0);
+                    p.rot = self.rng.f32() * 10.0;
+                    self.particles.push(p);
+                }
+                let petal_rate = if busy >= 2 { 2.5 } else { 0.5 };
+                if self.rng.f32() < petal_rate * dt {
+                    let c = if self.rng.bool() { Color32::from_rgb(255, 182, 200) } else { Color32::from_rgb(255, 240, 245) };
+                    let mut p = Particle::new(3, Pos2::new(self.rng.f32() * VW, -20.0), Vec2::new(20.0 + self.rng.f32() * 25.0, 40.0 + self.rng.f32() * 30.0), (g + 20.0) / 50.0, c, 7.0 + self.rng.f32() * 3.0);
+                    p.rot = self.rng.f32() * 6.0;
+                    p.vrot = 1.5 + self.rng.f32() * 2.0;
+                    self.particles.push(p);
+                }
+            }
+            Theme::Krathong => {
+                let wt = kr::water_top(vh);
+                if self.rng.f32() < 0.35 * dt {
+                    let mut p = Particle::new(8, Pos2::new(500.0 + self.rng.f32() * 560.0, wt - 10.0), Vec2::new(self.rng.f32() * 8.0 - 4.0, -(10.0 + self.rng.f32() * 8.0)), 26.0, GOLD, 0.35 + self.rng.f32() * 0.25);
+                    p.rot = self.rng.f32() * 10.0;
+                    self.particles.push(p);
+                }
+            }
+        }
     }
 
-    fn spawn_effect(&mut self, kind: u8, tier: usize) {
-        let g = self.ground_v();
+    fn spawn_effect(&mut self, kind: u8, tier: usize, theme: Theme) {
+        let vh = self.vh();
+        let launch_y = match theme {
+            Theme::Shrine => ground_for(vh),
+            Theme::Krathong => kr::water_top(vh),
+        };
         match kind {
-            // glitter burst around the card
             0 => {
-                let n = 30 + tier * 20;
-                for _ in 0..n {
+                let cxx = if theme == Theme::Krathong { 650.0 } else { 430.0 };
+                for _ in 0..(30 + tier * 20) {
                     let a = self.rng.f32() * std::f32::consts::TAU;
                     let sp = 80.0 + self.rng.f32() * (120.0 + tier as f32 * 60.0);
                     let c = pick_color(&mut self.rng, tier);
-                    self.particles.push(Particle { pos: Pos2::new(430.0, 230.0), vel: Vec2::new(a.cos(), a.sin()) * sp, life: 1.6, max: 1.6, color: c, size: 4.0 + tier as f32, kind: 1, tier });
+                    let mut p = Particle::new(1, Pos2::new(cxx, 200.0), Vec2::new(a.cos(), a.sin()) * sp, 1.6, c, 4.0 + tier as f32);
+                    p.drag = 1.5;
+                    p.rot = self.rng.f32() * 10.0;
+                    self.particles.push(p);
                 }
             }
-            // rocket
             1 => {
-                let x = 80.0 + self.rng.f32() * (VW - 160.0);
-                // apex height (virtual px) -> launch speed for gravity 600
-                let h = (g * (0.45 + self.rng.f32() * 0.3)).min(g - 80.0);
+                // rocket: apex inside the upper area (keeps fireworks off the streamer's face)
+                let top_area = if self.cfg.window.layout == "full" { vh * 0.45 } else { vh };
+                let ty = top_area * (0.08 + self.rng.f32() * 0.32);
+                let h = (launch_y - ty).max(120.0);
                 let vy = -(2.0 * 600.0 * h).sqrt();
-                self.particles.push(Particle { pos: Pos2::new(x, g), vel: Vec2::new(self.rng.f32() * 60.0 - 30.0, vy), life: 5.0, max: 5.0, color: GOLD, size: 4.0, kind: 2, tier });
+                let x = 80.0 + self.rng.f32() * (VW - 160.0);
+                let mut p = Particle::new(2, Pos2::new(x, launch_y), Vec2::new(self.rng.f32() * 60.0 - 30.0, vy), 6.0, GOLD, 4.0);
+                p.tier = tier;
+                self.particles.push(p);
             }
-            // gold rain from top
             _ => {
                 for _ in 0..(60 + tier * 30) {
                     let x = self.rng.f32() * VW;
-                    self.particles.push(Particle { pos: Pos2::new(x, -self.rng.f32() * 200.0), vel: Vec2::new(self.rng.f32() * 30.0 - 15.0, 160.0 + self.rng.f32() * 160.0), life: 3.5, max: 3.5, color: if self.rng.bool() { GOLD } else { Color32::from_rgb(255, 240, 200) }, size: 4.0, kind: 1, tier });
+                    let mut p = Particle::new(1, Pos2::new(x, -self.rng.f32() * 200.0), Vec2::new(self.rng.f32() * 30.0 - 15.0, 160.0 + self.rng.f32() * 160.0), 3.5, if self.rng.bool() { GOLD } else { Color32::from_rgb(255, 240, 200) }, 4.0);
+                    p.rot = self.rng.f32() * 10.0;
+                    self.particles.push(p);
                 }
             }
         }
     }
 
     fn explode(&mut self, pos: Pos2, tier: usize) {
-        let n = [50, 70, 90, 140, 220][tier.min(4)];
-        let sp = [140.0, 170.0, 210.0, 280.0, 360.0][tier.min(4)];
-        let c1 = pick_color(&mut self.rng, tier);
-        let c2 = pick_color(&mut self.rng, tier);
-        for i in 0..n {
-            let a = i as f32 / n as f32 * std::f32::consts::TAU + self.rng.f32() * 0.1;
-            let ring = if tier >= 3 && i % 3 == 0 { 0.55 } else { 1.0 };
-            let v = sp * ring * (0.85 + self.rng.f32() * 0.3);
-            let life = 1.4 + self.rng.f32() * 0.6 + tier as f32 * 0.15;
-            self.particles.push(Particle { pos, vel: Vec2::new(a.cos(), a.sin()) * v, life, max: life, color: if ring < 1.0 { c2 } else { c1 }, size: 3.0 + tier as f32 * 0.6, kind: 0, tier });
-        }
-        if tier >= 3 {
-            for _ in 0..30 {
-                let a = self.rng.f32() * std::f32::consts::TAU;
-                self.particles.push(Particle { pos, vel: Vec2::new(a.cos(), a.sin()) * sp * 0.4 * self.rng.f32(), life: 2.5, max: 2.5, color: Color32::WHITE, size: 3.0, kind: 1, tier });
+        let t = tier.min(4);
+        let shapes: &[u8] = match t {
+            0 | 1 => &[0],
+            2 => &[0, 1],
+            3 => &[0, 1, 2, 3],
+            _ => &[0, 1, 2, 3, 4],
+        };
+        let shape = shapes[self.rng.usize(0..shapes.len())];
+        let n = [50, 70, 90, 130, 180][t];
+        let sp = [150.0, 180.0, 220.0, 270.0, 330.0][t];
+        let c1 = pick_color(&mut self.rng, t);
+        let c2 = pick_color(&mut self.rng, t);
+        let crackle = t >= 4 || (t >= 3 && self.rng.bool());
+        let push = |rng: &mut fastrand::Rng, ps: &mut Vec<Particle>, v: Vec2, c: Color32, kind: u8, life: f32, drag: f32, grav: f32, size: f32| {
+            let mut p = Particle::new(kind, pos, v, life * (0.85 + rng.f32() * 0.3), c, size);
+            p.drag = drag;
+            p.grav = grav;
+            p.rot = rng.f32() * 10.0;
+            p.crackle = crackle && rng.f32() < 0.35;
+            p.tier = t;
+            ps.push(p);
+        };
+        let tau = std::f32::consts::TAU;
+        match shape {
+            1 => {
+                for i in 0..n {
+                    let a = i as f32 / n as f32 * tau;
+                    push(&mut self.rng, &mut self.particles, Vec2::new(a.cos(), a.sin()) * sp, c1, 0, 1.6, 1.4, 110.0, 3.4);
+                }
+                for _ in 0..n / 3 {
+                    let a = self.rng.f32() * tau;
+                    let r = sp * 0.3 * self.rng.f32();
+                    push(&mut self.rng, &mut self.particles, Vec2::new(a.cos(), a.sin()) * r, c2, 1, 1.2, 1.5, 40.0, 3.0);
+                }
             }
+            2 => {
+                for i in 0..n {
+                    let a = i as f32 / n as f32 * tau;
+                    let hx = 16.0 * a.sin().powi(3);
+                    let hy = -(13.0 * a.cos() - 5.0 * (2.0 * a).cos() - 2.0 * (3.0 * a).cos() - (4.0 * a).cos());
+                    push(&mut self.rng, &mut self.particles, Vec2::new(hx, hy) / 16.0 * sp, Color32::from_rgb(255, 100, 150), 0, 1.7, 1.6, 50.0, 3.6);
+                }
+            }
+            3 => {
+                for _ in 0..n {
+                    let a = self.rng.f32() * tau;
+                    let v = Vec2::new(a.cos(), a.sin()) * sp * (0.6 + self.rng.f32() * 0.4);
+                    push(&mut self.rng, &mut self.particles, v, GOLD, 6, 2.9, 1.9, 90.0, 3.0);
+                }
+            }
+            4 => {
+                for i in 0..n {
+                    let a = i as f32 / n as f32 * tau;
+                    push(&mut self.rng, &mut self.particles, Vec2::new(a.cos(), a.sin()) * sp, c1, 0, 1.7, 1.3, 100.0, 3.6);
+                    push(&mut self.rng, &mut self.particles, Vec2::new(a.cos(), a.sin()) * sp * 0.55, c2, 0, 1.5, 1.3, 100.0, 3.0);
+                }
+            }
+            _ => {
+                for _ in 0..n {
+                    let a = self.rng.f32() * tau;
+                    let v = Vec2::new(a.cos(), a.sin()) * sp * (0.55 + self.rng.f32() * 0.45);
+                    let c = if self.rng.f32() < 0.7 { c1 } else { c2 };
+                    push(&mut self.rng, &mut self.particles, v, c, 0, 1.5, 1.2, 140.0, 3.0 + t as f32 * 0.4);
+                }
+            }
+        }
+        let mut fl = Particle::new(7, pos, Vec2::ZERO, 0.3, Color32::from_rgb(255, 235, 190), 70.0 + t as f32 * 25.0);
+        fl.max = 0.3;
+        self.particles.push(fl);
+        if t >= 3 {
+            self.shake = self.shake.max(if t >= 4 { 9.0 } else { 5.0 });
         }
     }
 
     // ------------------------------------------------------------------ drawing
     fn draw(&mut self, ui: &mut egui::Ui) {
         let rect = ui.ctx().content_rect();
-        let painter = ui.painter_at(rect);
+        let mut painter = ui.painter_at(rect);
         let bg = self.cfg.window.background.clone();
         if bg == "green" {
             painter.rect_filled(rect, 0, Color32::from_rgb(0, 255, 0));
         }
-        let mut cx = Cx::new(&painter, rect, self.time);
-        cx.soft = bg != "green";
-        let cx = cx;
-        let sprites = self.sprites.as_ref().unwrap();
-        if bg == "scene" {
-            draw_backdrop(&cx, sprites);
-        } else {
-            draw_platform(&cx);
+        if self.cfg.window.idle == "hidden" {
+            if self.scene_alpha <= 0.002 {
+                return;
+            }
+            painter.multiply_opacity(self.scene_alpha);
         }
-        let g = cx.ground();
+        let theme = self.theme();
+        let mut cx = Cx::new(&painter, rect, self.scene_time);
+        cx.soft = bg != "green";
+        if theme == Theme::Krathong {
+            cx.gy = Some(kr::bank_y(cx.vh));
+        }
+        // camera: zoom on the landed เซียมซี stick + screen shake
+        if let Some(s) = &self.current {
+            if let Some(st) = &s.stick {
+                if let Some(l) = st.landed {
+                    let zt = s.t - WALK - l;
+                    let z = if zt < 1.3 { ease_in_out((zt - 0.15) / 0.5) } else { 1.0 - ease_in_out((zt - 1.3) / 0.45) };
+                    cx.z = 1.0 + 0.85 * z;
+                    cx.fx = st.x;
+                    cx.fy = st.y - 40.0;
+                    cx.ox = (VW * 0.5 - st.x) * 0.35 * z;
+                    cx.oy = (cx.vh * 0.55 - st.y) * 0.35 * z;
+                }
+            }
+        }
+        if self.shake > 0.05 {
+            cx.ox += noise1(self.time * 40.0) * self.shake;
+            cx.oy += noise1(self.time * 37.0 + 5.0) * self.shake;
+        }
+        let sprites = self.sprites.as_ref().unwrap();
+        match theme {
+            Theme::Shrine => self.draw_shrine_world(&cx, sprites, &bg),
+            Theme::Krathong => self.draw_krathong_world(&cx, sprites, &bg),
+        }
+        draw_particles(&cx, &self.particles, false);
 
+        // screen-space layer (no camera)
+        let mut ui_cx = Cx::new(&painter, rect, self.scene_time);
+        ui_cx.soft = bg != "green";
+        if let Some(s) = &self.current {
+            if s.tier >= 4 {
+                let (w, a, r, _) = self.durations(s);
+                let fade = smooth(s.t / 0.6) * (1.0 - smooth((s.t - (w + a + r)) / 0.8));
+                shimmer(&ui_cx, fade);
+            }
+            self.draw_reveal(&ui_cx, s);
+        }
+        self.draw_hud(&ui_cx);
+    }
+
+    fn draw_shrine_world(&self, cx: &Cx, sprites: &Sprites, bg: &str) {
+        if bg == "scene" {
+            draw_backdrop(cx, sprites);
+        } else {
+            draw_platform(cx);
+        }
+        draw_particles(cx, &self.particles, true);
         let mut shrine_glow = 0.0;
         let mut cyl_on_altar = true;
         if let Some(s) = &self.current {
             let (w, a, r, o) = self.durations(s);
             let t = s.t;
             if s.tier >= 2 {
-                let alpha = smooth(t / 0.8) * (1.0 - smooth((t - (w + a + r)) / o));
-                draw_carpet(&cx, alpha, s.tier >= 4);
+                let alpha = 1.0 - smooth((t - (w + a + r)) / o);
+                draw_carpet(cx, t / 0.9, alpha, s.tier >= 4);
             }
             if t > w && t < w + a + r {
-                shrine_glow = smooth((t - w) / 1.0) * if s.action == Action::Pray { 1.0 } else { 0.5 };
+                shrine_glow = smooth((t - w - 0.8) / 1.2) * if s.action == Action::Pray { 1.0 } else { 0.5 };
             }
-            if s.action == Action::Siamsi && t > w + 0.3 && t < w + a + r {
+            if s.action == Action::Siamsi && t > w + 0.25 && t < w + a + r + 0.3 {
                 cyl_on_altar = false;
             }
         }
-        draw_shrine(&cx, sprites, shrine_glow, cyl_on_altar);
-
+        draw_shrine(cx, sprites, shrine_glow, cyl_on_altar);
         if let Some(s) = &self.current {
-            self.draw_show(&cx, s);
+            self.draw_actor(cx, sprites, s);
         }
-        draw_particles(&cx, &self.particles);
-        if let Some(s) = &self.current {
-            if s.tier >= 4 {
-                shimmer(&cx, 1.0);
-            }
-            self.draw_reveal(&cx, s);
-        }
-
-        // HUD
-        if !self.queue.is_empty() {
-            let txt = format!("คิวถัดไป {} คน", self.queue.len());
-            let m = cx.measure(&txt, 26.0, true);
-            cx.rect(16.0, 16.0, 40.0 + m.x, 62.0, 22.0, rgba(0, 0, 0, 0.55));
-            cx.text(28.0, 39.0, Align2::LEFT_CENTER, &txt, 26.0, Color32::WHITE, true);
-        }
-        if self.cfg.window.show_status && !self.status.is_empty() && self.current.is_none() {
-            cx.text_o(VW - 16.0, 24.0, Align2::RIGHT_CENTER, &self.status, 20.0, Color32::WHITE, rgba(0, 0, 0, 0.8), false);
-        }
-        if !self.running {
-            cx.text_o(VW - 16.0, 56.0, Align2::RIGHT_CENTER, "หยุดรับของขวัญชั่วคราว", 22.0, rgba(255, 120, 120, 1.0), rgba(0, 0, 0, 0.8), true);
-        }
-        if self.cfg.window.show_hint && self.current.is_none() && !self.cfg.window.hint_text.is_empty() {
-            let y = (g + cx.vh) / 2.0 + 6.0;
-            cx.text_o(VW / 2.0, y, Align2::CENTER_CENTER, &self.cfg.window.hint_text, 28.0, GOLD, rgba(60, 0, 10, 0.95), true);
-        }
-        if self.flash_msg.1 > 0.0 {
-            cx.text_o(VW / 2.0, 30.0, Align2::CENTER_CENTER, &self.flash_msg.0, 24.0, Color32::WHITE, rgba(0, 0, 0, 0.9), true);
-        }
-        let _ = Vec2::ZERO;
-        let _ = g;
+        draw_foreground_flowers(cx);
     }
 
-    fn draw_show(&self, cx: &Cx, s: &Show) {
-        let sprites = self.sprites.as_ref().unwrap();
-        let (w, a, r, o) = self.durations(s);
-        let t = s.t;
-        let g = cx.ground();
-        let mut pose = Pose { walk: 0.0, moving: false, wai: 0.0, bow: 0.0, kneel: 0.0, hold_cyl: None, facing: 1.0 };
-        let x;
-        if t < w {
-            x = lerp(-120.0, PRAY_X, t / w);
-            pose.walk = t * 9.0;
-            pose.moving = true;
-        } else if t < w + a {
-            x = PRAY_X;
-            let at = t - w;
-            match s.action {
-                Action::Pray => {
-                    pose.kneel = smooth(at / 0.5);
-                    pose.wai = smooth((at - 0.3) / 1.0);
-                    let b = ((at - 1.2) / 1.5).clamp(0.0, 1.0);
-                    pose.bow = (b * std::f32::consts::PI * 2.0).sin().abs() * 0.8;
-                }
-                Action::Siamsi => {
-                    pose.kneel = smooth(at / 0.5);
-                    if at < 3.0 {
-                        pose.hold_cyl = Some(if at > 0.5 { ((at - 0.5) * 22.0).sin() * 0.28 } else { 0.0 });
-                        pose.bow = 0.25;
-                    } else {
-                        pose.hold_cyl = Some(0.15);
-                    }
-                }
-            }
-        } else if t < w + a + r {
-            x = PRAY_X;
-            pose.kneel = 1.0;
-            match s.action {
-                Action::Pray => pose.wai = 1.0,
-                Action::Siamsi => pose.hold_cyl = Some(0.15),
-            }
-        } else {
-            let ot = t - w - a - r;
-            x = lerp(PRAY_X, -160.0, ot / o);
-            pose.walk = ot * 9.0;
-            pose.moving = true;
-            pose.facing = -1.0;
+    fn draw_krathong_world(&self, cx: &Cx, sprites: &Sprites, bg: &str) {
+        let scene = bg == "scene";
+        if scene {
+            kr::draw_sky(cx, sprites);
         }
-        // entourage
-        if s.tier >= 4 {
-            for (i, off) in [150.0, 270.0].iter().enumerate() {
-                let mut p2 = Pose { walk: pose.walk + i as f32 * 1.5, moving: pose.moving, wai: 0.0, bow: 0.0, kneel: 0.0, hold_cyl: None, facing: pose.facing };
-                if !pose.moving {
-                    p2.wai = pose.wai * 0.0;
-                }
-                let ax = x - off * pose.facing;
-                draw_attendant(cx, sprites, ax, &p2);
-            }
+        draw_particles(cx, &self.particles, true);
+        kr::draw_river(cx, scene, scene);
+        let vh = cx.vh;
+        let wt = kr::water_top(vh);
+        let mut fl: Vec<&Floating> = self.floating.iter().collect();
+        fl.sort_by(|a, b| a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal));
+        for f in fl {
+            let sc = lerp(0.6, 1.0, ((f.y - wt) / (vh - wt).max(1.0)).clamp(0.0, 1.0));
+            let alpha = f.fade.map(|x| 1.0 - x / 2.0).unwrap_or(1.0).clamp(0.0, 1.0);
+            let bob = (cx.time * 1.6 + f.seed).sin() * 2.5;
+            kr::draw_krathong(cx, f.x, f.y + bob, sc, f.tier, f.seed, Some(&f.name), alpha);
         }
-        let look = Look { tier: s.tier, shirt: s.shirt, pants: s.pants, scale: 1.15 };
-        draw_character(cx, sprites, x, &pose, &look);
+        kr::draw_bank(cx);
+        if let Some(s) = &self.current {
+            self.draw_actor(cx, sprites, s);
+        }
+        kr::draw_foreground(cx);
+    }
 
-        // stick falling (siamsi)
-        if s.action == Action::Siamsi && t > w + 3.0 {
-            let ft = ((t - w - 3.0) / 1.0).clamp(0.0, 1.0);
-            let sx = lerp(x + 95.0, x + 170.0, ft);
-            let sy = lerp(g - 230.0, g - 12.0, ft) - (ft * std::f32::consts::PI).sin() * 70.0;
-            let ang = ft * 4.5;
-            let (sn, cs) = ang.sin_cos();
-            let len = 60.0;
-            cx.line((sx - cs * len, sy - sn * len), (sx + cs * len, sy + sn * len), 7.0, rgba(225, 180, 100, 1.0));
-            cx.circle(sx + cs * len, sy + sn * len, 5.0, RED);
-            if ft >= 1.0 {
-                cx.glow(sx, sy, 70.0, GOLD, 0.5);
-                cx.text_o(sx, sy - 40.0, Align2::CENTER_CENTER, &s.stick.to_string(), 40.0, RED, Color32::WHITE, true);
+    fn draw_actor(&self, cx: &Cx, sprites: &Sprites, s: &Show) {
+        let (w, a_d, r, o) = self.durations(s);
+        let (x, pose) = self.animate(s);
+        let k = Self::char_scale(s.theme);
+        if s.tier >= 4 {
+            for (i, off) in [130.0f32, 230.0].iter().enumerate() {
+                let mut p2 = pose.clone();
+                p2.hold_cyl = None;
+                p2.hands = 0.0;
+                p2.carry = 0.0;
+                p2.reach = None;
+                p2.bow = 0.0;
+                p2.kneel = 0.0;
+                p2.phase += i as f32 * 1.3;
+                p2.blink = blink(self.scene_time, s.look.seed + 3.0 + i as f32);
+                p2.expr = if pose.expr == 1 { 1 } else { 0 };
+                let ax = x - off * pose.facing;
+                draw_attendant(cx, sprites, ax, &p2, i);
             }
         }
-        // name banner
-        let head_top = g - if pose.kneel > 0.5 { 210.0 } else { 260.0 } - if s.tier >= 3 { 45.0 } else { 0.0 };
-        draw_name_banner(cx, x, head_top, &s.user, s.tier, if s.tier >= 2 { &s.tier_name } else { "" });
+        let look = Look { tier: s.tier, shirt: s.look.shirt, pants: s.look.pants, scale: k, hair: s.look.hair, style: s.look.style };
+        let rig = draw_character(cx, sprites, x, &pose, &look);
+        // krathong being carried / placed / pushed
+        if s.theme == Theme::Krathong && !s.released {
+            let a = s.t - w;
+            let held = s.t < w || a < 1.1;
+            let kp = if held {
+                let hd = rig.arms[1].1;
+                (hd.0 + 6.0 * pose.facing, hd.1 + 4.0)
+            } else {
+                self.kr_pos(s, a)
+            };
+            kr::draw_krathong(cx, kp.0, kp.1, if held { 0.62 } else { 0.72 }, s.tier, s.look.seed, None, 1.0);
+        }
+        // fortune stick in flight / landed, with its number
+        if let Some(st) = &s.stick {
+            let landed = st.landed.map(|l| s.t - w - l);
+            let end_fade = 1.0 - smooth((s.t - (w + a_d + r)) / 0.5);
+            let glow = landed.map(|lt| 0.6 * smooth(lt / 0.3)).unwrap_or(0.0) * end_fade;
+            if end_fade > 0.0 {
+                draw_stick(cx, st.x, st.y, st.ang, glow);
+            }
+            if let Some(lt) = landed {
+                let pop = ease_out_back(lt / 0.4);
+                if end_fade > 0.0 && pop > 0.05 {
+                    cx.text_o(st.x, st.y - 34.0 - 10.0 * pop, Align2::CENTER_CENTER, &s.stick_no.to_string(), 44.0 * pop, with_a(RED, end_fade), with_a(Color32::WHITE, end_fade), true);
+                }
+            }
+        }
+        // name banner (bounce-in, follows the head)
+        let head_top = rig.head.1 - HEAD_R * k * 1.05 - if s.tier >= 3 { 70.0 * k } else { 8.0 };
+        let total = w + a_d + r + o;
+        let alpha = 1.0 - smooth((s.t - (total - 0.6)) / 0.6);
+        draw_name_banner(cx, x, head_top, &s.user, s.tier, if s.tier >= 2 { &s.tier_name } else { "" }, s.t / 0.9, alpha);
+    }
+
+    fn pray_geo(&self, s: &Show) -> PrayGeo {
+        let rows = s.numbers.len();
+        let tier = s.tier;
+        let cxx = if s.theme == Theme::Krathong { 650.0 } else { 430.0 };
+        let top = 30.0;
+        let row_h = 118.0;
+        let hgt = 110.0 + rows as f32 * row_h;
+        let wdt = 600.0 + tier as f32 * 20.0;
+        let size = 82.0 + tier as f32 * 5.0;
+        let mut row_y = vec![];
+        let mut digit_x = vec![];
+        for (i, (_, num)) in s.numbers.iter().enumerate() {
+            row_y.push(top + 110.0 + i as f32 * row_h + 52.0);
+            let n = num.chars().count();
+            let dx = size * 0.78;
+            let c = cxx + 95.0;
+            digit_x.push((0..n).map(|j| c + (j as f32 - (n as f32 - 1.0) / 2.0) * dx).collect());
+        }
+        PrayGeo { cxx, top, wdt, hgt, row_y, digit_x, size }
     }
 
     fn draw_reveal(&self, cx: &Cx, s: &Show) {
@@ -504,71 +1168,264 @@ impl ShrineApp {
         if rt < 0.0 || rt > r {
             return;
         }
-        let alpha = smooth(rt / 0.35) * (1.0 - smooth((rt - (r - 0.5)) / 0.5));
-        let pop = ease_out_back(rt / 0.45);
-        let cxx = 430.0;
-        let top = 30.0 + (1.0 - pop) * 40.0;
+        match (s.action, s.theme) {
+            (Action::Pray, _) => self.draw_number_card(cx, s, rt, r),
+            (Action::Siamsi, Theme::Shrine) => self.draw_scroll(cx, s, rt, r),
+            (Action::Siamsi, Theme::Krathong) => self.draw_blessing(cx, s, rt, r),
+        }
+    }
+
+    fn draw_number_card(&self, cx: &Cx, s: &Show, rt: f32, r: f32) {
+        let geo = self.pray_geo(s);
         let tier = s.tier;
+        let fo = smooth((rt - (r - 0.5)) / 0.5);
+        let alpha = smooth(rt / 0.25) * (1.0 - fo);
+        let yoff = -(1.0 - ease_out_back(rt / 0.6)) * (geo.hgt + 60.0) - fo * 40.0;
+        let (x0, x1) = (geo.cxx - geo.wdt / 2.0, geo.cxx + geo.wdt / 2.0);
+        let top = geo.top + yoff;
         let border = if tier >= 2 { GOLD } else { rgba(255, 220, 150, 1.0) };
-        match s.action {
-            Action::Pray => {
-                let rows = s.numbers.len() as f32;
-                let hgt = 110.0 + rows * 118.0;
-                let wdt = 600.0 + tier as f32 * 20.0;
-                let (x0, x1) = (cxx - wdt / 2.0, cxx + wdt / 2.0);
-                if tier >= 3 {
-                    cx.glow(cxx, top + hgt / 2.0, wdt * 0.8, GOLD, 0.45 * alpha);
+        if tier >= 3 {
+            cx.glow(geo.cxx, top + geo.hgt / 2.0, geo.wdt * 0.8, GOLD, 0.4 * alpha);
+        }
+        cx.rect(x0 + 8.0, top + 12.0, x1 + 8.0, top + geo.hgt + 12.0, 26.0, rgba(0, 0, 0, 0.3 * alpha));
+        let (c_top, c_bot) = if s.theme == Theme::Krathong { (rgba(36, 48, 120, 0.96 * alpha), rgba(14, 18, 64, 0.96 * alpha)) } else { (rgba(170, 26, 46, 0.96 * alpha), rgba(96, 8, 24, 0.96 * alpha)) };
+        cx.vgradient(x0, top, x1, top + geo.hgt, c_top, c_bot);
+        cx.rect_line(x0, top, x1, top + geo.hgt, 18.0, 5.0 + tier as f32, with_a(border, alpha));
+        cx.rect_line(x0 + 12.0, top + 12.0, x1 - 12.0, top + geo.hgt - 12.0, 12.0, 2.0, with_a(border, 0.55 * alpha));
+        for (ox, oy) in [(x0 + 12.0, top + 12.0), (x1 - 12.0, top + 12.0), (x0 + 12.0, top + geo.hgt - 12.0), (x1 - 12.0, top + geo.hgt - 12.0)] {
+            cx.poly(&[(ox, oy - 9.0), (ox + 9.0, oy), (ox, oy + 9.0), (ox - 9.0, oy)], with_a(border, alpha));
+        }
+        let title = format!("{} ของ {}", self.cfg.numbers.title, s.user);
+        cx.text_o(geo.cxx, top + 55.0, Align2::CENTER_CENTER, &title, 38.0, with_a(GOLD, alpha), rgba(60, 0, 0, alpha), true);
+        for (i, (label, num)) in s.numbers.iter().enumerate() {
+            let y = geo.row_y[i] + yoff;
+            cx.text(x0 + 46.0, y, Align2::LEFT_CENTER, label, 32.0, rgba(255, 235, 200, alpha), true);
+            let start = row_start(i);
+            let digits: Vec<char> = num.chars().collect();
+            let bw = geo.size * 0.66;
+            let bh = geo.size * 1.08;
+            for (j, ch) in digits.iter().enumerate() {
+                let x = geo.digit_x[i][j];
+                cx.rect(x - bw / 2.0, y - bh / 2.0, x + bw / 2.0, y + bh / 2.0, 10.0, rgba(0, 0, 0, 0.35 * alpha * smooth((rt - start + 0.3) / 0.3)));
+                if rt < start {
+                    continue;
                 }
-                cx.rect(x0 + 8.0, top + 10.0, x1 + 8.0, top + hgt + 10.0, 26.0, rgba(0, 0, 0, 0.35 * alpha));
-                cx.vgradient(x0, top, x1, top + hgt, rgba(150, 20, 35, 0.96 * alpha), rgba(90, 8, 22, 0.96 * alpha));
-                cx.rect_line(x0, top, x1, top + hgt, 18.0, 5.0 + tier as f32, with_a(border, alpha));
-                cx.rect_line(x0 + 12.0, top + 12.0, x1 - 12.0, top + hgt - 12.0, 12.0, 2.0, with_a(border, 0.6 * alpha));
-                let title = format!("{} ของ {}", self.cfg.numbers.title, s.user);
-                cx.text_o(cxx, top + 55.0, Align2::CENTER_CENTER, &title, 38.0, with_a(GOLD, alpha), rgba(60, 0, 0, alpha), true);
-                for (i, (label, num)) in s.numbers.iter().enumerate() {
-                    let appear = 0.5 + i as f32 * 0.7;
-                    let y = top + 110.0 + i as f32 * 118.0 + 55.0;
-                    cx.text(x0 + 50.0, y, Align2::LEFT_CENTER, label, 32.0, rgba(255, 235, 200, alpha), true);
-                    let lt = rt - appear;
-                    let shown: String = if lt < 0.6 {
-                        // rolling digits
-                        let seed = ((self.time * 30.0) as u32).wrapping_mul(2654435761).wrapping_add(i as u32 * 97);
-                        num.chars().enumerate().map(|(j, _)| char::from(b'0' + ((seed >> (j * 3)) % 10) as u8)).collect()
-                    } else {
-                        num.clone()
-                    };
-                    let sc = if lt < 0.6 { 0.9 } else { ease_out_back((lt - 0.6) / 0.35) };
-                    let size = (86.0 + tier as f32 * 6.0) * sc.max(0.1);
-                    if lt >= 0.6 {
-                        cx.glow(cxx + 90.0, y, 120.0, GOLD, 0.35 * alpha);
-                    }
-                    let spaced: String = shown.chars().map(|c| c.to_string()).collect::<Vec<_>>().join(" ");
-                    cx.text_o(cxx + 90.0, y, Align2::CENTER_CENTER, &spaced, size, with_a(Color32::from_rgb(255, 225, 90), alpha), rgba(80, 0, 0, alpha), true);
+                let stop = digit_stop(i, j);
+                if rt < stop {
+                    // slot-machine strip clipped to the slot; slows slightly before stopping
+                    let v = (rt - start) * 16.0 + j as f32 * 3.3 + i as f32 * 1.7;
+                    let d = (v.floor() as i64).rem_euclid(10) as u8;
+                    let fr = v.fract();
+                    let clip = cx.clip_rect_v(x - bw / 2.0, y - bh / 2.0, x + bw / 2.0, y + bh / 2.0);
+                    let cp = cx.p.with_clip_rect(clip);
+                    let c2 = cx.with_painter(&cp);
+                    let col = rgba(255, 225, 140, 0.85 * alpha);
+                    c2.text(x, y + fr * bh, Align2::CENTER_CENTER, &((b'0' + d) as char).to_string(), geo.size * 0.9, col, true);
+                    c2.text(x, y + fr * bh - bh, Align2::CENTER_CENTER, &((b'0' + (d + 1) % 10) as char).to_string(), geo.size * 0.9, col, true);
+                } else {
+                    let st = rt - stop;
+                    let sc = lerp(1.7, 1.0, ease_out_back(st / 0.35));
+                    let flash = (1.0 - st / 0.4).max(0.0);
+                    let pulse = 0.25 + 0.1 * (cx.time * 4.0 + j as f32).sin();
+                    cx.glow_add(x, y, geo.size * 0.9, GOLD, (pulse + flash * 0.8) * alpha);
+                    cx.text_o(x, y, Align2::CENTER_CENTER, &ch.to_string(), geo.size * sc, with_a(Color32::from_rgb(255, 228, 100), alpha), rgba(90, 20, 0, alpha), true);
                 }
-            }
-            Action::Siamsi => {
-                let wdt = 640.0 + tier as f32 * 16.0;
-                let (x0, x1) = (cxx - wdt / 2.0, cxx + wdt / 2.0);
-                let hgt = 400.0;
-                if tier >= 3 {
-                    cx.glow(cxx, top + hgt / 2.0, wdt * 0.8, GOLD, 0.45 * alpha);
-                }
-                cx.rect(x0 + 8.0, top + 10.0, x1 + 8.0, top + hgt + 10.0, 20.0, rgba(0, 0, 0, 0.35 * alpha));
-                cx.vgradient(x0, top, x1, top + hgt, rgba(255, 246, 220, 0.97 * alpha), rgba(245, 222, 170, 0.97 * alpha));
-                cx.rect_line(x0, top, x1, top + hgt, 16.0, 5.0 + tier as f32, with_a(if tier >= 2 { GOLD_D } else { RED }, alpha));
-                // scroll rods
-                cx.rect(x0 - 14.0, top - 8.0, x1 + 14.0, top + 14.0, 10.0, rgba(140, 20, 30, alpha));
-                cx.rect(x0 - 14.0, top + hgt - 14.0, x1 + 14.0, top + hgt + 8.0, 10.0, rgba(140, 20, 30, alpha));
-                let title = format!("{} {}", self.cfg.siamsi.title, s.stick);
-                cx.text_o(cxx, top + 75.0, Align2::CENTER_CENTER, &title, 56.0 * pop.max(0.2), rgba(170, 10, 30, alpha), rgba(255, 255, 255, alpha), true);
-                cx.line((x0 + 60.0, top + 125.0), (x1 - 60.0, top + 125.0), 3.0, with_a(GOLD_D, alpha));
-                let ta = alpha * smooth((rt - 0.5) / 0.6);
-                cx.text_wrapped(cxx, top + 150.0, &s.fortune, 36.0, wdt - 100.0, rgba(70, 30, 10, ta), true);
-                cx.text(cxx, top + hgt - 40.0, Align2::CENTER_CENTER, &format!("คำทำนายของ {}", s.user), 26.0, rgba(140, 60, 20, ta), false);
             }
         }
     }
 
+    fn draw_scroll(&self, cx: &Cx, s: &Show, rt: f32, r: f32) {
+        let tier = s.tier;
+        let cxx = 430.0;
+        let wdt = 640.0 + tier as f32 * 16.0;
+        let (x0, x1) = (cxx - wdt / 2.0, cxx + wdt / 2.0);
+        let full = 400.0;
+        let fo = smooth((rt - (r - 0.5)) / 0.5);
+        let alpha = smooth(rt / 0.2) * (1.0 - fo);
+        let top = 30.0 - fo * 30.0;
+        let h = full * ease_out_cubic(rt / 0.9) * (1.0 - 0.6 * fo);
+        if tier >= 3 {
+            cx.glow(cxx, top + h / 2.0, wdt * 0.8, GOLD, 0.4 * alpha * (h / full));
+        }
+        cx.rect(x0 + 8.0, top + 10.0, x1 + 8.0, top + h + 10.0, 16.0, rgba(0, 0, 0, 0.3 * alpha));
+        cx.vgradient(x0, top, x1, top + h, rgba(255, 248, 225, 0.98 * alpha), rgba(245, 222, 170, 0.98 * alpha));
+        cx.rect_line(x0, top, x1, top + h, 12.0, 4.0 + tier as f32, with_a(if tier >= 2 { GOLD_D } else { RED }, alpha));
+        let clip = cx.clip_rect_v(x0, top, x1, top + h);
+        let cp = cx.p.with_clip_rect(clip);
+        let c2 = cx.with_painter(&cp);
+        let pop = ease_out_back((rt - 0.45) / 0.4);
+        let title = format!("{} {}", self.cfg.siamsi.title, s.stick_no);
+        if pop > 0.01 {
+            c2.text_o(cxx, top + 78.0, Align2::CENTER_CENTER, &title, 56.0 * pop, rgba(170, 10, 30, alpha), rgba(255, 255, 255, alpha), true);
+        }
+        c2.seg((x0 + 60.0, top + 128.0), (x1 - 60.0, top + 128.0), 3.0, with_a(GOLD_D, alpha));
+        let ta = alpha * smooth((rt - 0.8) / 0.5);
+        let rise = (1.0 - smooth((rt - 0.8) / 0.5)) * 16.0;
+        c2.text_wrapped(cxx, top + 152.0 + rise, &s.text, 36.0, wdt - 100.0, rgba(70, 30, 10, ta), true);
+        c2.text(cxx, top + full - 40.0, Align2::CENTER_CENTER, &format!("คำทำนายของ {}", s.user), 26.0, rgba(140, 60, 20, ta), false);
+        let rod = |y: f32| {
+            cx.rect(x0 - 18.0, y - 11.0, x1 + 18.0, y + 11.0, 10.0, rgba(140, 20, 30, alpha));
+            cx.rect(x0 - 18.0, y - 11.0, x1 + 18.0, y - 4.0, 8.0, rgba(190, 50, 60, alpha));
+            cx.circle(x0 - 22.0, y, 13.0, with_a(GOLD, alpha));
+            cx.circle(x1 + 22.0, y, 13.0, with_a(GOLD, alpha));
+        };
+        rod(top);
+        rod(top + h);
+    }
+
+    fn draw_blessing(&self, cx: &Cx, s: &Show, rt: f32, r: f32) {
+        let tier = s.tier;
+        let cxx = 650.0;
+        let wdt = 620.0 + tier as f32 * 16.0;
+        let hgt = 380.0;
+        let fo = smooth((rt - (r - 0.5)) / 0.5);
+        let alpha = smooth(rt / 0.25) * (1.0 - fo);
+        let sc = ease_out_elastic(rt / 1.0).max(0.01) * (1.0 - 0.1 * fo);
+        let top = 30.0 + hgt * (1.0 - sc) / 2.0 - fo * 30.0;
+        let (w2, h2) = (wdt * sc, hgt * sc);
+        let (x0, x1) = (cxx - w2 / 2.0, cxx + w2 / 2.0);
+        cx.glow(cxx, top + h2 / 2.0, w2 * 0.75, rgba(255, 210, 140, 1.0), 0.35 * alpha);
+        cx.rect(x0 + 8.0, top + 10.0, x1 + 8.0, top + h2 + 10.0, 24.0, rgba(0, 0, 0, 0.3 * alpha));
+        cx.vgradient(x0, top, x1, top + h2, rgba(36, 46, 124, 0.96 * alpha), rgba(16, 18, 66, 0.96 * alpha));
+        cx.rect_line(x0, top, x1, top + h2, 24.0, 4.0 + tier as f32, with_a(GOLD, alpha));
+        if sc < 0.6 {
+            return;
+        }
+        let ca = alpha * smooth((rt - 0.35) / 0.4);
+        kr::draw_krathong(cx, x0 + 64.0, top + 74.0, 0.5, tier, s.look.seed, None, ca);
+        cx.text_o(cxx + 20.0, top + 62.0, Align2::CENTER_CENTER, &format!("{} {}", self.cfg.krathong.wish_title, s.user), 36.0, with_a(GOLD, ca), rgba(10, 10, 40, ca), true);
+        cx.seg((x0 + 70.0, top + 112.0), (x1 - 70.0, top + 112.0), 2.0, with_a(GOLD, ca * 0.8));
+        let ta = alpha * smooth((rt - 0.7) / 0.5);
+        cx.text_wrapped(cxx, top + 140.0 + (1.0 - smooth((rt - 0.7) / 0.5)) * 14.0, &s.text, 38.0, w2 - 110.0, rgba(255, 245, 220, ta), true);
+        for i in 0..10 {
+            let a = i as f32 / 10.0 * std::f32::consts::TAU + cx.time * 0.3;
+            let tw = (cx.time * 3.0 + i as f32 * 1.7).sin().abs();
+            sparkle(cx, cxx + a.cos() * (w2 / 2.0 + 10.0), top + h2 / 2.0 + a.sin() * (h2 / 2.0 + 10.0), 9.0 * tw, rgba(255, 240, 200, ca));
+        }
+    }
+
+    fn draw_hud(&self, cx: &Cx) {
+        if !self.queue.is_empty() {
+            let names: Vec<&str> = self.queue.iter().take(3).map(|s| s.user.as_str()).collect();
+            let more = self.queue.len().saturating_sub(3);
+            let txt = if more > 0 { format!("ถัดไป: {}  +{}", names.join(", "), more) } else { format!("ถัดไป: {}", names.join(", ")) };
+            let m = cx.measure(&txt, 24.0, true);
+            cx.rect(16.0, cx.vh - 60.0, 44.0 + m.x, cx.vh - 16.0, 22.0, rgba(0, 0, 0, 0.55));
+            cx.text(30.0, cx.vh - 38.0, Align2::LEFT_CENTER, &txt, 24.0, Color32::WHITE, true);
+        }
+        let idle = self.current.is_none() && self.queue.is_empty();
+        if self.cfg.window.show_status && !self.status.is_empty() && idle {
+            cx.text_o(VW - 16.0, 24.0, Align2::RIGHT_CENTER, &self.status, 20.0, Color32::WHITE, rgba(0, 0, 0, 0.8), false);
+        }
+        if !self.running {
+            cx.text_o(VW - 16.0, 56.0, Align2::RIGHT_CENTER, "หยุดรับของขวัญชั่วคราว", 22.0, rgba(255, 120, 120, 1.0), rgba(0, 0, 0, 0.8), true);
+        }
+        let hint = if self.theme() == Theme::Krathong { &self.cfg.krathong.hint_text } else { &self.cfg.window.hint_text };
+        if self.cfg.window.show_hint && idle && !hint.is_empty() {
+            let y = if self.theme() == Theme::Krathong { 36.0 } else { cx.vh - 40.0 };
+            cx.text_o(VW / 2.0, y, Align2::CENTER_CENTER, hint, 28.0, GOLD, rgba(60, 0, 10, 0.95), true);
+        }
+        if self.flash_msg.1 > 0.0 {
+            cx.text_o(VW / 2.0, 30.0, Align2::CENTER_CENTER, &self.flash_msg.0, 24.0, Color32::WHITE, rgba(0, 0, 0, 0.9), true);
+        }
+    }
+
+    fn publish_state(&mut self) {
+        self.frame += 1;
+        if self.frame % 6 != 0 {
+            return;
+        }
+        let cur = self.current.as_ref().map(|s| serde_json::json!({"action": format!("{:?}", s.action), "theme": s.theme.key(), "user": s.user, "tier": s.tier + 1, "t": s.t}));
+        let queued: Vec<serde_json::Value> = self.queue.iter().map(|s| serde_json::json!({"action": format!("{:?}", s.action), "user": s.user, "tier": s.tier + 1})).collect();
+        let (w, h) = self.cfg.window_size();
+        let v = serde_json::json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "theme": self.theme().key(),
+            "running": self.running,
+            "idle": !self.active(),
+            "idle_mode": self.cfg.window.idle,
+            "scene_alpha": self.scene_alpha,
+            "scene_time": self.scene_time,
+            "background": self.cfg.window.background,
+            "layout": self.cfg.window.layout,
+            "window_size": [w, h],
+            "always_on_top": self.cfg.window.always_on_top,
+            "click_through": self.cfg.window.click_through,
+            "test_tier": self.test_tier + 1,
+            "current": cur,
+            "queue": queued,
+            "queue_len": self.queue.len(),
+            "floating": self.floating.len(),
+            "particles": self.particles.len(),
+            "shows_started": self.shows_started,
+            "shows_finished": self.shows_finished,
+            "gifts_received": self.gifts_received,
+            "settings_open": self.settings_open,
+            "frame": self.frame,
+            "time": self.time,
+            "config_path": self.cfg_path.display().to_string(),
+            "update": self.updater.snapshot_json(),
+        });
+        if let Ok(mut s) = self.state.lock() {
+            *s = v.to_string();
+        }
+    }
+}
+
+struct PrayGeo {
+    cxx: f32,
+    top: f32,
+    wdt: f32,
+    hgt: f32,
+    row_y: Vec<f32>,
+    digit_x: Vec<Vec<f32>>,
+    size: f32,
+}
+
+/// stick pops out of the cylinder at this act-time
+const POP: f32 = 3.5;
+fn row_start(i: usize) -> f32 {
+    0.45 + i as f32 * 0.25
+}
+fn digit_stop(i: usize, j: usize) -> f32 {
+    row_start(i) + 0.75 + j as f32 * 0.32 + i as f32 * 0.35
+}
+fn kr_wish_window(a: Action) -> (f32, f32) {
+    match a {
+        Action::Pray => (1.4, 2.9),
+        Action::Siamsi => (1.4, 3.5),
+    }
+}
+fn kr_push_end(a: Action) -> f32 {
+    kr_wish_window(a).1 + 0.9
+}
+
+fn blink(t: f32, seed: f32) -> f32 {
+    let period = 3.1 + (seed * 7.3).fract() * 1.4;
+    let ph = (t + seed * 5.0).rem_euclid(period);
+    if ph < 0.13 { 1.0 - ((ph / 0.13) * 2.0 - 1.0).abs() } else { 0.0 }
+}
+
+/// Per-viewer look from a hash of the nickname (each viewer looks different).
+pub fn appearance_for(name: &str) -> Appearance {
+    let mut h: u64 = 1469598103934665603;
+    for b in name.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(1099511628211);
+    }
+    let hue = (h % 360) as f32 / 360.0;
+    let hairs = [Color32::from_rgb(52, 34, 28), Color32::from_rgb(96, 58, 38), Color32::from_rgb(30, 28, 40), Color32::from_rgb(140, 84, 48), Color32::from_rgb(70, 44, 74)];
+    Appearance {
+        shirt: hsv(hue, 0.35, 0.98),
+        pants: hsv((hue + 0.5).fract(), 0.45, 0.78),
+        hair: hairs[((h >> 12) % hairs.len() as u64) as usize],
+        style: ((h >> 20) % 4) as u8,
+        seed: ((h >> 28) % 1000) as f32 / 100.0,
+    }
+}
+
+
+impl ShrineApp {
     // ------------------------------------------------------------------ input
     fn handle_keys(&mut self, ctx: &egui::Context) {
         let (keys, shift, cmd) = ctx.input(|i| {
@@ -604,6 +1461,12 @@ impl ShrineApp {
                     _ => "transparent",
                 };
                 self.cfg.window.background = next.into();
+            } else if k == Key::F2 {
+                self.sync_edit_buffers();
+                let next = if self.theme() == Theme::Shrine { Theme::Krathong } else { Theme::Shrine };
+                self.cfg.theme.mode = next.key().into();
+                self.load_gift_rows();
+                self.flash(format!("โหมด: {}", if next == Theme::Krathong { "ลอยกระทง" } else { "ไหว้พระ / เซียมซี" }));
             } else if k == Key::Delete {
                 self.queue.clear();
             }
@@ -642,10 +1505,18 @@ impl ShrineApp {
     }
 
     fn sync_edit_buffers(&mut self) {
-        self.cfg.gifts = self.gift_rows.iter().filter(|(k, _)| !k.trim().is_empty()).map(|(k, v)| (k.trim().to_string(), v.clone())).collect();
+        let map: std::collections::BTreeMap<String, String> = self.gift_rows.iter().filter(|(k, _)| !k.trim().is_empty()).map(|(k, v)| (k.trim().to_string(), v.clone())).collect();
+        match self.gift_rows_theme {
+            Theme::Shrine => self.cfg.gifts = map,
+            Theme::Krathong => self.cfg.krathong.gifts = map,
+        }
         let f: Vec<String> = self.fortunes_text.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
         if !f.is_empty() {
             self.cfg.siamsi.fortunes = f;
+        }
+        let b: Vec<String> = self.blessings_text.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+        if !b.is_empty() {
+            self.cfg.krathong.blessings = b;
         }
     }
 
@@ -682,7 +1553,7 @@ impl ShrineApp {
     }
 
     fn settings_contents(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let tabs = ["เริ่ม/หยุด", "TikTok", "หน้าจอ", "ของขวัญ", "ระดับ", "เลข/เซียมซี", "ทดสอบ"];
+        let tabs = ["เริ่ม/หยุด", "TikTok", "หน้าจอ", "ของขวัญ", "ระดับ", "เลข/คำทำนาย", "ทดสอบ", "อัปเดต"];
         ui.horizontal_wrapped(|ui| {
             for (i, t) in tabs.iter().enumerate() {
                 if ui.selectable_label(self.settings_tab == i, egui::RichText::new(*t).size(17.0)).clicked() {
@@ -690,6 +1561,7 @@ impl ShrineApp {
                 }
             }
         });
+        self.update_banner_ui(ui);
         ui.separator();
         egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(ui.available_height() - 52.0).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
@@ -700,7 +1572,8 @@ impl ShrineApp {
                 3 => self.tab_gifts(ui),
                 4 => self.tab_tiers(ui),
                 5 => self.tab_numbers(ui),
-                _ => self.tab_test(ui),
+                6 => self.tab_test(ui),
+                _ => self.tab_update(ui),
             }
         });
         ui.separator();
@@ -709,10 +1582,7 @@ impl ShrineApp {
                 self.save_config(ctx);
             }
             if ui.button(egui::RichText::new("โหลดค่าใหม่").size(16.0)).clicked() {
-                self.cfg = Config::load(&self.cfg_path);
-                self.gift_rows = self.cfg.gifts.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                self.fortunes_text = self.cfg.siamsi.fortunes.join("\n");
-                self.flash("โหลดการตั้งค่าใหม่แล้ว".into());
+                self.reload_config();
             }
             if self.flash_msg.1 > 0.0 {
                 ui.label(egui::RichText::new(&self.flash_msg.0).color(Color32::from_rgb(120, 220, 120)));
@@ -721,6 +1591,20 @@ impl ShrineApp {
     }
 
     fn tab_main(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("โหมด:").size(18.0).strong());
+            let cur = self.theme();
+            for (th, label) in [(Theme::Shrine, "ไหว้พระ / เสี่ยงเซียมซี"), (Theme::Krathong, "ลอยกระทง")] {
+                let sel = cur == th;
+                let b = egui::Button::new(egui::RichText::new(label).size(18.0).strong().color(if sel { Color32::WHITE } else { Color32::LIGHT_GRAY })).fill(if sel { Color32::from_rgb(170, 110, 20) } else { Color32::from_gray(50) }).min_size(Vec2::new(200.0, 40.0)).corner_radius(10);
+                if ui.add(b).clicked() && !sel {
+                    self.sync_edit_buffers();
+                    self.cfg.theme.mode = th.key().into();
+                    self.load_gift_rows();
+                }
+            }
+        });
         ui.add_space(6.0);
         ui.vertical_centered(|ui| {
             let (txt, col) = if self.running { ("หยุดรับของขวัญ", Color32::from_rgb(200, 40, 50)) } else { ("เริ่มรับของขวัญ", Color32::from_rgb(30, 150, 70)) };
@@ -738,8 +1622,8 @@ impl ShrineApp {
         ui.add_space(10.0);
         ui.group(|ui| {
             ui.label(egui::RichText::new("ปุ่มลัด (คลิกที่หน้าต่างเอฟเฟกต์ก่อน)").strong());
-            ui.label("1 = ไหว้พระขอเลข   2 = เซียมซี   (Shift+1..5 เลือกระดับทดสอบ)");
-            ui.label("Q W E R T = ไหว้พระ ระดับ 1-5   |   A S D F G = เซียมซี ระดับ 1-5");
+            ui.label("1 = การกระทำที่ 1 (ไหว้พระ / ลอยกระทง)   2 = การกระทำที่ 2 (เซียมซี / อธิษฐาน)   Shift+1..5 = เลือกระดับทดสอบ");
+            ui.label("Q W E R T = การกระทำที่ 1 ระดับ 1-5   |   A S D F G = การกระทำที่ 2 ระดับ 1-5   F2 = สลับโหมด");
             ui.label("F1 หรือ คลิกขวา = เปิด/ปิดหน้าตั้งค่า   F8 = คลิกทะลุ   F9 = สลับพื้นหลัง");
             ui.label("Delete = ล้างคิว   Ctrl+Q (Mac: Cmd+Q) = ปิดโปรแกรม   ลากหน้าต่างเพื่อย้ายตำแหน่ง");
         });
@@ -816,7 +1700,7 @@ impl ShrineApp {
             ui.vertical(|ui| {
                 ui.radio_value(&mut self.cfg.window.background, "transparent".to_string(), "โปร่งใส (ลอยทับจอ)");
                 ui.radio_value(&mut self.cfg.window.background, "green".to_string(), "สีเขียว (Chroma Key)");
-                ui.radio_value(&mut self.cfg.window.background, "scene".to_string(), "ฉากวัดเต็มพื้นหลัง");
+                ui.radio_value(&mut self.cfg.window.background, "scene".to_string(), "ฉากเต็มพื้นหลัง (วัด / แม่น้ำยามค่ำ)");
             });
             ui.end_row();
             ui.label("ลอยอยู่บนสุดเสมอ");
@@ -825,11 +1709,22 @@ impl ShrineApp {
             ui.label("คลิกทะลุหน้าต่าง");
             ui.checkbox(&mut self.cfg.window.click_through, "(F8 สลับ)");
             ui.end_row();
+            ui.label("ตอนว่าง (ไม่มีของขวัญ)");
+            ui.vertical(|ui| {
+                ui.radio_value(&mut self.cfg.window.idle, "still".to_string(), "ภาพนิ่ง (ค่าเริ่มต้น)");
+                ui.radio_value(&mut self.cfg.window.idle, "ambient".to_string(), "ขยับเบา ๆ (เปลวเทียน ควันธูป)");
+                ui.radio_value(&mut self.cfg.window.idle, "hidden".to_string(), "ซ่อน (โปร่งใสทั้งหมด)");
+            });
+            ui.end_row();
             ui.label("แสดงคำแนะนำ");
             ui.checkbox(&mut self.cfg.window.show_hint, "");
             ui.end_row();
             ui.label("ข้อความคำแนะนำ");
-            ui.add(egui::TextEdit::singleline(&mut self.cfg.window.hint_text).desired_width(330.0));
+            if self.theme() == Theme::Krathong {
+                ui.add(egui::TextEdit::singleline(&mut self.cfg.krathong.hint_text).desired_width(330.0));
+            } else {
+                ui.add(egui::TextEdit::singleline(&mut self.cfg.window.hint_text).desired_width(330.0));
+            }
             ui.end_row();
             ui.label("แสดงสถานะการเชื่อมต่อ");
             ui.checkbox(&mut self.cfg.window.show_status, "");
@@ -845,7 +1740,15 @@ impl ShrineApp {
     }
 
     fn tab_gifts(&mut self, ui: &mut egui::Ui) {
-        ui.heading("ของขวัญ -> การกระทำ");
+        if self.gift_rows_theme != self.theme() {
+            self.sync_edit_buffers();
+            self.load_gift_rows();
+        }
+        let th = self.theme();
+        ui.heading(format!("ของขวัญ -> การกระทำ (โหมด{})", if th == Theme::Krathong { "ลอยกระทง" } else { "ไหว้พระ" }));
+        if th == Theme::Krathong {
+            ui.label("โหมดลอยกระทงมีตารางของตัวเอง (ถ้าว่างจะใช้ตารางของโหมดไหว้พระ)");
+        }
         ui.label("ใส่ชื่อของขวัญภาษาอังกฤษตามที่ TikTok ใช้ (เช่น Rose, TikTok, Finger Heart) หรือเลข gift id");
         let mut remove = None;
         egui::Grid::new("gifts").num_columns(3).striped(true).spacing([10.0, 8.0]).show(ui, |ui| {
@@ -855,7 +1758,7 @@ impl ShrineApp {
             ui.end_row();
             for (i, (name, act)) in self.gift_rows.iter_mut().enumerate() {
                 ui.add_sized([220.0, 26.0], egui::TextEdit::singleline(name));
-                action_combo(ui, ("g", i), act);
+                action_combo(ui, ("g", i), act, th);
                 if ui.button("ลบ").clicked() {
                     remove = Some(i);
                 }
@@ -871,7 +1774,7 @@ impl ShrineApp {
         ui.separator();
         ui.horizontal(|ui| {
             ui.label("ของขวัญอื่น ๆ ที่ไม่อยู่ในตาราง:");
-            action_combo(ui, ("def", 0), &mut self.cfg.tiktok.default_action);
+            action_combo(ui, ("def", 0), &mut self.cfg.tiktok.default_action, th);
         });
         ui.horizontal(|ui| {
             ui.label("ส่งแบบคอมโบ เล่นซ้ำสูงสุด");
@@ -926,6 +1829,21 @@ impl ShrineApp {
             }
         });
         ui.separator();
+        ui.heading("ลอยกระทง: คำอวยพร");
+        ui.horizontal(|ui| {
+            ui.label("หัวข้อ");
+            ui.text_edit_singleline(&mut self.cfg.krathong.wish_title);
+        });
+        ui.horizontal(|ui| {
+            ui.label("กระทงลอยค้างได้สูงสุด");
+            ui.add(egui::DragValue::new(&mut self.cfg.krathong.max_floating).range(1..=60));
+            ui.label("ใบ  นาน");
+            ui.add(egui::DragValue::new(&mut self.cfg.krathong.float_seconds).range(10.0..=900.0));
+            ui.label("วินาที");
+        });
+        ui.label(format!("คำอวยพร 1 บรรทัด = 1 ข้อ (ตอนนี้ {} ข้อ)", self.blessings_text.lines().filter(|l| !l.trim().is_empty()).count()));
+        ui.add(egui::TextEdit::multiline(&mut self.blessings_text).desired_rows(8).desired_width(f32::INFINITY));
+        ui.separator();
         ui.heading("เซียมซี");
         ui.horizontal(|ui| {
             ui.label("หัวข้อ");
@@ -945,11 +1863,11 @@ impl ShrineApp {
             }
         });
         ui.horizontal(|ui| {
-            if ui.add(egui::Button::new(egui::RichText::new("ทดสอบ ไหว้พระขอเลข").size(18.0)).min_size(Vec2::new(240.0, 48.0))).clicked() {
+            if ui.add(egui::Button::new(egui::RichText::new(if self.theme() == Theme::Krathong { "ทดสอบ ลอยกระทงขอเลข" } else { "ทดสอบ ไหว้พระขอเลข" }).size(18.0)).min_size(Vec2::new(240.0, 48.0))).clicked() {
                 let n = test_name(&mut self.rng);
                 self.enqueue(Action::Pray, &n, self.tier_min(self.test_tier), self.test_tier);
             }
-            if ui.add(egui::Button::new(egui::RichText::new("ทดสอบ เซียมซี").size(18.0)).min_size(Vec2::new(200.0, 48.0))).clicked() {
+            if ui.add(egui::Button::new(egui::RichText::new(if self.theme() == Theme::Krathong { "ทดสอบ อธิษฐาน" } else { "ทดสอบ เซียมซี" }).size(18.0)).min_size(Vec2::new(200.0, 48.0))).clicked() {
                 let n = test_name(&mut self.rng);
                 self.enqueue(Action::Siamsi, &n, self.tier_min(self.test_tier), self.test_tier);
             }
@@ -961,6 +1879,142 @@ impl ShrineApp {
         ui.label("ทดสอบผ่าน HTTP (เช่นจาก TikFinity / เบราว์เซอร์):");
         ui.code(format!("http://{}/event?action=pray&user=สมชาย&diamonds=100", self.cfg.http.bind));
         ui.code(format!("http://{}/gift?gift_name=Rose&user=สมชาย&repeat=5", self.cfg.http.bind));
+    }
+
+    // ------------------------------------------------------------------ updates
+    fn update_banner_ui(&mut self, ui: &mut egui::Ui) {
+        let s = self.updater.snapshot();
+        if s.available && !s.busy && s.restart.is_none() {
+            let tag = s.latest.as_ref().map(|l| l.tag.clone()).unwrap_or_default();
+            egui::Frame::new().fill(Color32::from_rgb(120, 80, 10)).corner_radius(8).inner_margin(8).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(format!("มีเวอร์ชันใหม่ {tag} (ตอนนี้ v{})", s.current)).size(17.0).strong().color(Color32::WHITE));
+                    if ui.add(egui::Button::new(egui::RichText::new("อัปเดตเลย").size(17.0).strong()).fill(Color32::from_rgb(30, 150, 70))).clicked() {
+                        self.updater.apply();
+                        self.settings_tab = 7;
+                    }
+                    if ui.button("ดูรายละเอียด").clicked() {
+                        self.settings_tab = 7;
+                    }
+                });
+            });
+        }
+    }
+
+    fn tab_update(&mut self, ui: &mut egui::Ui) {
+        let s = self.updater.snapshot();
+        ui.heading("อัปเดตโปรแกรม");
+        ui.label(format!("เวอร์ชันที่ใช้อยู่: v{}", s.current));
+        match (&s.latest, s.checking) {
+            (_, true) => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("กำลังตรวจหาอัปเดต...");
+                });
+            }
+            (Some(l), _) => {
+                if s.available {
+                    ui.label(egui::RichText::new(format!("มีเวอร์ชันใหม่: {}", l.tag)).size(18.0).strong().color(Color32::from_rgb(255, 210, 80)));
+                } else {
+                    ui.label(egui::RichText::new(format!("เป็นเวอร์ชันล่าสุดแล้ว ({})", l.tag)).color(Color32::from_rgb(120, 220, 120)));
+                }
+            }
+            _ => {}
+        }
+        ui.horizontal(|ui| {
+            if ui.add_enabled(!s.checking && !s.busy, egui::Button::new(egui::RichText::new("ตรวจหาอัปเดต").size(17.0)).min_size(Vec2::new(180.0, 38.0))).clicked() {
+                self.updater.check();
+            }
+            if s.available && ui.add_enabled(!s.busy, egui::Button::new(egui::RichText::new("อัปเดตเลย").size(17.0).strong()).fill(Color32::from_rgb(30, 150, 70)).min_size(Vec2::new(160.0, 38.0))).clicked() {
+                self.updater.apply();
+            }
+            ui.checkbox(&mut self.cfg.update.check_on_start, "ตรวจทุกครั้งที่เปิดโปรแกรม");
+        });
+        if s.busy || s.restart.is_some() {
+            ui.label(&s.phase);
+            if let Some((a, b)) = s.progress {
+                let frac = if b > 0 { a as f32 / b as f32 } else { 0.0 };
+                ui.add(egui::ProgressBar::new(frac).show_percentage().text(format!("{:.1} / {:.1} MB", a as f32 / 1e6, b as f32 / 1e6)));
+            }
+        }
+        if !s.error.is_empty() {
+            ui.label(egui::RichText::new(&s.error).color(Color32::from_rgb(255, 120, 120)));
+        }
+        if let Some(l) = &s.latest {
+            if s.available && !l.body.trim().is_empty() {
+                ui.label(egui::RichText::new(format!("มีอะไรใหม่ใน {}", l.tag)).strong());
+                egui::ScrollArea::vertical().id_salt("changelog").max_height(150.0).show(ui, |ui| {
+                    ui.add(egui::Label::new(egui::RichText::new(l.body.replace('\r', "")).size(14.0)).wrap());
+                });
+            }
+        }
+        ui.separator();
+        ui.heading("อัปเดตตัวเชื่อม TikTok");
+        ui.label("ถ้า TikTok เปลี่ยนระบบแล้วเชื่อมต่อไม่ได้ กดปุ่มนี้เพื่ออัปเดตเฉพาะตัวเชื่อม (tiktok-live-connector) ไม่ต้องรอแอปเวอร์ชันใหม่");
+        egui::Grid::new("bridgever").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+            ui.label("ที่ใช้อยู่");
+            ui.label(egui::RichText::new(&s.bridge_current).strong());
+            ui.end_row();
+            ui.label("ล่าสุด (ไฟล์สำเร็จรูป)");
+            ui.label(s.bridge_release.clone().unwrap_or_else(|| if s.bridge_checking { "กำลังตรวจ...".into() } else { "-".into() }));
+            ui.end_row();
+            ui.label("ล่าสุด (npm)");
+            ui.label(s.bridge_npm.clone().unwrap_or_else(|| if s.bridge_checking { "กำลังตรวจ...".into() } else { "-".into() }));
+            ui.end_row();
+        });
+        ui.horizontal(|ui| {
+            if ui.add_enabled(!s.bridge_busy, egui::Button::new(egui::RichText::new("อัปเดตตัวเชื่อม TikTok").size(17.0)).min_size(Vec2::new(240.0, 38.0))).clicked() {
+                self.updater.update_bridge(self.cfg.tiktok.node_command.clone());
+            }
+            if s.bridge_busy {
+                ui.spinner();
+            }
+        });
+        if !s.bridge_msg.is_empty() {
+            ui.label(&s.bridge_msg);
+        }
+    }
+
+    fn handle_updates(&mut self, ctx: &egui::Context) {
+        let (restart, script) = {
+            let mut st = self.updater.st.lock().unwrap();
+            (st.restart.take(), st.bridge_new_script.take())
+        };
+        if let Some(script) = script {
+            self.bridge.lock().unwrap().script = script;
+            self.reconnect();
+            self.flash("อัปเดตตัวเชื่อม TikTok แล้ว".into());
+        }
+        if let Some(exe) = restart {
+            self.save_config(ctx);
+            // stop the bridge child so the new instance can take over
+            restart_bridge(&self.bridge, "", "", &self.cfg.tiktok.node_command, false);
+            let mut c = std::process::Command::new(&exe);
+            c.args(std::env::args().skip(1).filter(|a| a != "--fake-version"));
+            match c.spawn() {
+                Ok(_) => {
+                    eprintln!("[update] เปิดเวอร์ชันใหม่ {}", exe.display());
+                    ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Close);
+                }
+                Err(e) => self.flash(format!("เปิดเวอร์ชันใหม่ไม่ได้: {e} - ปิดแล้วเปิดโปรแกรมใหม่เอง")),
+            }
+        }
+    }
+
+    fn handle_record(&mut self, ctx: &egui::Context) {
+        let Some(rec) = &mut self.rec else { return };
+        if self.time >= rec.start && self.time <= rec.end {
+            let idx = rec.requested;
+            rec.requested += 1;
+            let path = rec.dir.join(format!("f{idx:05}.png"));
+            let saved = rec.saved.clone();
+            ctx.request_screenshot(move |img| {
+                save_png(&img, &path, false);
+                saved.fetch_add(1, Ordering::SeqCst);
+            });
+        } else if self.time > rec.end && rec.saved.load(Ordering::SeqCst) >= rec.requested {
+            ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Close);
+        }
     }
 
     fn handle_shot(&mut self, ctx: &egui::Context) {
@@ -1001,7 +2055,7 @@ impl eframe::App for ShrineApp {
             self.sprites = Some(load_sprites(&ctx, &self.assets_dir));
         }
         while let Ok(ev) = self.rx.try_recv() {
-            self.handle_incoming(ev);
+            self.handle_incoming(ev, &ctx);
         }
         self.handle_keys(&ctx);
         let dt = self.sim_dt.unwrap_or_else(|| ctx.input(|i| i.stable_dt).min(0.1));
@@ -1023,16 +2077,16 @@ impl eframe::App for ShrineApp {
             self.settings_ui(&ctx);
         }
         self.handle_shot(&ctx);
+        self.handle_record(&ctx);
+        self.handle_updates(&ctx);
+        self.publish_state();
         ctx.request_repaint();
     }
 }
 
-fn action_combo(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, act: &mut String) {
-    let label = |a: &str| match a {
-        "pray" => "ไหว้พระขอเลข",
-        "siamsi" => "เสี่ยงเซียมซี",
-        _ => "ไม่ทำอะไร",
-    };
+
+fn action_combo(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, act: &mut String, th: Theme) {
+    let label = |a: &str| th.action_label(a);
     egui::ComboBox::from_id_salt(id).selected_text(label(act)).width(160.0).show_ui(ui, |ui| {
         for a in ["pray", "siamsi", "none"] {
             ui.selectable_value(act, a.to_string(), label(a));
