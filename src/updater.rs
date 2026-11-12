@@ -231,8 +231,45 @@ fn mac_bundle(exe: &Path) -> Option<PathBuf> {
     exe.ancestors().find(|p| p.extension().map(|e| e == "app").unwrap_or(false)).map(|p| p.to_path_buf())
 }
 
-/// Install the downloaded asset over the running app. Returns the executable to restart.
+/// Launch a freshly installed binary with `--selftest` (no window) and wait up to `timeout`.
+/// Catches binaries that cannot start on this machine (e.g. missing glibc version, wrong arch, corrupt file).
+pub fn selftest(exe: &Path, timeout: std::time::Duration) -> Result<(), String> {
+    let mut cmd = Command::new(exe);
+    cmd.arg("--selftest").stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    no_window(&mut cmd);
+    let mut child = cmd.spawn().map_err(|e| format!("เปิดไฟล์ใหม่ไม่ได้: {e}"))?;
+    let t0 = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if t0.elapsed() < timeout => std::thread::sleep(std::time::Duration::from_millis(100)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("ไฟล์ใหม่ไม่ตอบสนองภายใน {} วินาที", timeout.as_secs()));
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    let so = String::from_utf8_lossy(&out.stdout);
+    if out.status.success() && so.contains("selftest ok") {
+        eprintln!("[update] ทดสอบไฟล์ใหม่ผ่าน: {}", so.trim());
+        Ok(())
+    } else {
+        let se = String::from_utf8_lossy(&out.stderr);
+        let msg = format!("{} {}", so.trim(), se.trim()).trim().chars().take(300).collect::<String>();
+        Err(format!("ไฟล์ใหม่เปิดไม่ผ่าน ({}): {msg}", out.status))
+    }
+}
+
+/// Install the downloaded asset over the running app, verify it launches (`--selftest`),
+/// and roll back to the previous version if it does not. Returns the executable to restart.
 pub fn install(file: &Path, work: &Path) -> Result<PathBuf, String> {
+    install_verified(file, work, &|exe| selftest(exe, std::time::Duration::from_secs(20)))
+}
+
+pub fn install_verified(file: &Path, work: &Path, verify: &dyn Fn(&Path) -> Result<(), String>) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let ex = work.join("x");
     let _ = std::fs::remove_dir_all(&ex);
@@ -249,7 +286,14 @@ pub fn install(file: &Path, work: &Path) -> Result<PathBuf, String> {
             }
             let _ = run(Command::new("xattr").args(["-dr", "com.apple.quarantine"]).arg(&cur_app), "xattr");
             let rel = exe.strip_prefix(&cur_app).map(|p| p.to_path_buf()).unwrap_or_default();
-            return Ok(cur_app.join(rel));
+            let new_exe = cur_app.join(rel);
+            if let Err(e) = verify(&new_exe) {
+                let _ = std::fs::remove_dir_all(&cur_app);
+                let _ = std::fs::rename(&old, &cur_app);
+                eprintln!("[update] {e} -> ย้อนกลับเป็นเวอร์ชันเดิม");
+                return Err(format!("{e} — ย้อนกลับเป็นเวอร์ชันเดิมแล้ว"));
+            }
+            return Ok(new_exe);
         }
     }
     let exe_name = exe.file_name().unwrap().to_string_lossy().to_string();
@@ -266,6 +310,14 @@ pub fn install(file: &Path, work: &Path) -> Result<PathBuf, String> {
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755));
+    }
+    if let Err(e) = verify(&exe) {
+        // put the old binary back; the running (old) version simply keeps going
+        let _ = std::fs::remove_file(&exe);
+        let _ = std::fs::rename(&old, &exe);
+        let _ = std::fs::remove_dir_all(&ex);
+        eprintln!("[update] {e} -> ย้อนกลับเป็นเวอร์ชันเดิม");
+        return Err(format!("{e} — ย้อนกลับเป็นเวอร์ชันเดิมแล้ว"));
     }
     // refresh the bundled manual next to the exe (config.toml is never touched)
     if let Some(d) = exe.parent() {
@@ -415,7 +467,10 @@ impl Updater {
                     s.phase = format!("ติดตั้ง {} แล้ว กำลังเปิดใหม่...", rel.tag);
                     s.restart = Some(exe);
                 }
-                Err(e) => set("", Some(format!("ติดตั้งไม่สำเร็จ: {e}"))),
+                Err(e) => {
+                    let _ = std::fs::remove_dir_all(&work);
+                    set("", Some(format!("ติดตั้งไม่สำเร็จ: {e}")));
+                }
             }
         });
     }
@@ -521,6 +576,28 @@ mod tests {
         assert!(!newer("0.1.9", "v0.2.0"));
         assert!(newer("2.6.1", "2.5.0"));
     }
+    #[test]
+    #[cfg(unix)]
+    fn rollback_when_new_binary_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        // install_verified() swaps current_exe(), so the verify step is tested directly here
+        let d = std::env::temp_dir().join(format!("tsl-st-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        let bad = d.join("bad");
+        std::fs::write(&bad, "#!/bin/sh\necho 'error: GLIBC_2.43 not found' >&2\nexit 127\n").unwrap();
+        std::fs::set_permissions(&bad, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(selftest(&bad, std::time::Duration::from_secs(5)).is_err());
+        let good = d.join("good");
+        std::fs::write(&good, "#!/bin/sh\necho 'selftest ok 9.9.9'\n").unwrap();
+        std::fs::set_permissions(&good, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(selftest(&good, std::time::Duration::from_secs(5)).is_ok());
+        let hang = d.join("hang");
+        std::fs::write(&hang, "#!/bin/sh\nsleep 30\n").unwrap();
+        std::fs::set_permissions(&hang, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(selftest(&hang, std::time::Duration::from_secs(1)).is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn assets() {
         let a = vec![

@@ -94,7 +94,9 @@ def main():
             bg = state()['background']; xkey(w, 'F9'); bg2 = state()['background']; check('F9 cycles background', bg2 != bg, f'{bg} -> {bg2}')
             xkey(w, 'F9'); xkey(w, 'F9')
             th = state()['theme']; xkey(w, 'F2'); th2 = state()['theme']; check('F2 switches mode', th != th2, f'{th} -> {th2}')
-            xkey(w, 'F2')
+            xkey(w, 'F2'); th3 = state()['theme']
+            check('F2 cycles all 3 modes (shrine -> krathong -> cat)', [th, th2, th3] == ['shrine', 'krathong', 'cat'], f'{th} -> {th2} -> {th3}')
+            get('/control?mode=shrine'); wait_for(lambda s: s['theme'] == 'shrine')
             so = state()['settings_open']; xkey(w, 'F1'); check('F1 opens/closes settings', state()['settings_open'] != so)
             xkey(w, 'F1')
         clear_all()
@@ -163,6 +165,8 @@ def main():
         check('3 senders: front one plays, other two visible in line', s['current'] and s['current']['user'] == 'ผู้ส่งA' and [e['user'] for e in line] == ['ผู้ส่งB', 'ผู้ส่งC'], f"current={s['current'] and s['current']['user']} line={line}")
         check('3 senders: line is single-file, no overlap (>=100 px apart, on screen)', len(xs) == 2 and xs[0] - xs[1] >= 100 and min(xs) >= 0, f'x={xs}')
         check('emoji stripped from name label (no tofu)', any(e['user'] == 'ผู้ส่งC' for e in line))
+        cur = s['current'] or {}
+        check('shrine result card matches action (pray -> lucky numbers, siamsi -> fortune)', cur.get('card') == ('numbers' if cur.get('action') == 'Pray' else 'fortune'), f"{cur.get('action')} -> {cur.get('card')}")
         s = wait_for(lambda s: s['current'] is not None and s['current']['user'] == 'ผู้ส่งB', 15)
         check('3 senders: line advances (2nd sender steps up, 3rd moves forward)', s['current']['user'] == 'ผู้ส่งB' and [e['user'] for e in s['line']] == ['ผู้ส่งC'], f"line={s['line']}")
         s = wait_for(lambda s: s['current'] is not None and s['current']['user'] == 'ผู้ส่งC', 15)
@@ -182,6 +186,29 @@ def main():
         c = count(); get('/gift?gift_name=Rose&user=loy&diamonds=1000')
         s = wait_for(lambda s: s['floating'] >= 1, 12)
         check('krathong: krathong is released and keeps floating', s['floating'] >= 1, f"floating={s['floating']}")
+        # ---------------- cat mode: visible cat queue, thank-you card only (no lucky numbers)
+        get('/control?clear=1'); get('/control?mode=cat'); s = wait_for(lambda s: s['theme'] == 'cat')
+        check('runtime mode switch -> cat (ให้อาหารแมว)', s['theme'] == 'cat')
+        s = wait_for(lambda s: s['current'] is None, 20)
+        q = urllib.parse.quote
+        for u in ['แมวA', 'แมวB', 'แมวC']:
+            get(f'/gift?gift_name=Rose&user={q(u)}&diamonds=100')
+        s = wait_for(lambda s: s['current'] is not None and len(s['line']) == 2, 4)
+        check('cat: 3 senders -> front cat + 2 cats visible in line', s['current'] and s['current']['user'] == 'แมวA' and [e['user'] for e in s['line']] == ['แมวB', 'แมวC'], f"current={s['current'] and s['current']['user']} line={s['line']}")
+        seen = set(); cards = set(); t0 = time.time()
+        while time.time() - t0 < 25:
+            c = state()['current']
+            if c and c['user'] == 'แมวA':
+                seen.add(c.get('phase')); cards.add(c.get('card'))
+            elif c and c['user'] == 'แมวB':
+                break
+            time.sleep(0.1)
+        check('cat: walk -> pour -> eat -> card phases', {'pour', 'eat', 'card'} <= seen, str(sorted(x for x in seen if x)))
+        check('cat: result is thank-you card only (no lucky numbers)', cards == {'thanks'}, str(cards))
+        s = wait_for(lambda s: s['current'] is not None and s['current']['user'] == 'แมวB', 20)
+        check('cat: line advances to next sender', s['current'] and s['current']['user'] == 'แมวB' and [e['user'] for e in s['line']] == ['แมวC'], f"line={s['line']}")
+        get('/control?clear=1')
+        s = wait_for(lambda s: s['current'] is None or s['current']['user'] != 'แมวB', 25)
         get('/control?mode=shrine'); s = wait_for(lambda s: s['theme'] == 'shrine')
         check('runtime mode switch -> shrine', s['theme'] == 'shrine')
         get('/control?click_through=1'); s = wait_for(lambda s: s['click_through'])

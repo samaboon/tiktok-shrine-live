@@ -51,11 +51,17 @@ jobs:
             dist/TikTokShrineLive-macOS-universal.zip
 
   linux:
-    runs-on: ubuntu-latest
+    # oldest still-supported runner -> binary needs only glibc 2.35, so it runs on older distros too
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release && cargo test --release
+      - name: Check glibc requirement
+        run: |
+          NEED=$(objdump -T target/release/tiktok-shrine-live | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
+          echo "binary needs $NEED"
+          ./target/release/tiktok-shrine-live --selftest
       - name: Package tar.gz
         run: |
           mkdir -p dist/pkg && cp target/release/tiktok-shrine-live config.toml docs/คู่มือ.md dist/pkg/

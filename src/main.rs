@@ -2,6 +2,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod cat;
 mod config;
 mod events;
 mod krathong;
@@ -176,7 +177,39 @@ fn extract_bridge(dir: &Path) -> PathBuf {
     p
 }
 
+/// `--version` / `--selftest`: run before anything touches the display or config dir.
+/// The updater launches a freshly installed binary with `--selftest` and rolls back if it fails
+/// (missing system libraries, wrong CPU, corrupt download...).
+fn early_flags() {
+    let a: Vec<String> = std::env::args().skip(1).collect();
+    if a.iter().any(|x| x == "--version") {
+        println!("tiktok-shrine-live {}", env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
+    }
+    if a.iter().any(|x| x == "--selftest") {
+        let mut errs = vec![];
+        if toml::from_str::<Config>(config::DEFAULT_CONFIG).is_err() {
+            errs.push("built-in config");
+        }
+        for (n, f) in [("font", FONT_REG), ("font", FONT_BOLD), ("font", LATIN_REG), ("font", LATIN_BOLD), ("icon", ICON_PNG), ("bridge", BRIDGE_JS)] {
+            if f.len() < 1000 {
+                errs.push(n);
+            }
+        }
+        if image::load_from_memory(ICON_PNG).is_err() {
+            errs.push("icon decode");
+        }
+        if errs.is_empty() {
+            println!("selftest ok {}", env!("CARGO_PKG_VERSION"));
+            std::process::exit(0);
+        }
+        println!("selftest FAILED: {}", errs.join(", "));
+        std::process::exit(3);
+    }
+}
+
 fn main() -> eframe::Result<()> {
+    early_flags();
     let args = parse_args();
     let dir = resolve_config_dir();
     let cfg_path = args.config.clone().unwrap_or_else(|| dir.join("config.toml"));

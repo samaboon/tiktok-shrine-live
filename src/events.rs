@@ -17,8 +17,8 @@ pub enum Action {
 impl Action {
     pub fn parse(s: &str) -> Option<Action> {
         match s.trim().to_lowercase().as_str() {
-            "pray" | "wai" | "number" | "lucky" | "ไหว้พระ" | "ไหว้" | "1" => Some(Action::Pray),
-            "siamsi" | "fortune" | "seamsi" | "เซียมซี" | "2" => Some(Action::Siamsi),
+            "pray" | "wai" | "number" | "lucky" | "ไหว้พระ" | "ไหว้" | "feed" | "cat" | "ให้อาหาร" | "แมว" | "1" => Some(Action::Pray),
+            "siamsi" | "fortune" | "seamsi" | "เซียมซี" | "thanks" | "ขอบคุณ" | "2" => Some(Action::Siamsi),
             _ => None,
         }
     }

@@ -1,4 +1,5 @@
 //! Overlay app: themes, event queue, animation timeline, camera, fireworks, settings window.
+use crate::cat::{self, CatIn, Stage as CatStage};
 use crate::config::{digit_label, Config};
 use crate::events::{restart_bridge, Action, BridgeCtl, ControlCmd, DirectIn, GiftIn, Incoming};
 use crate::krathong as kr;
@@ -17,15 +18,39 @@ pub enum Theme {
     Shrine,
     /// ลอยกระทง
     Krathong,
+    /// ให้อาหารแมว
+    Cat,
 }
 impl Theme {
     pub fn from_key(s: &str) -> Theme {
-        if s.trim().eq_ignore_ascii_case("krathong") || s.contains("กระทง") { Theme::Krathong } else { Theme::Shrine }
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("krathong") || s.contains("กระทง") {
+            Theme::Krathong
+        } else if s.eq_ignore_ascii_case("cat") || s.contains("แมว") || s.contains("อาหาร") {
+            Theme::Cat
+        } else {
+            Theme::Shrine
+        }
     }
     pub fn key(self) -> &'static str {
         match self {
             Theme::Shrine => "shrine",
             Theme::Krathong => "krathong",
+            Theme::Cat => "cat",
+        }
+    }
+    pub fn next(self) -> Theme {
+        match self {
+            Theme::Shrine => Theme::Krathong,
+            Theme::Krathong => Theme::Cat,
+            Theme::Cat => Theme::Shrine,
+        }
+    }
+    pub fn title(self) -> &'static str {
+        match self {
+            Theme::Shrine => "ไหว้พระ / เซียมซี",
+            Theme::Krathong => "ลอยกระทง",
+            Theme::Cat => "ให้อาหารแมว",
         }
     }
     pub fn action_label(self, a: &str) -> &'static str {
@@ -34,6 +59,8 @@ impl Theme {
             (Theme::Shrine, "siamsi") => "เสี่ยงเซียมซี",
             (Theme::Krathong, "pray") => "ลอยกระทงขอเลข",
             (Theme::Krathong, "siamsi") => "อธิษฐานรับคำอวยพร",
+            (Theme::Cat, "pray") => "ให้อาหารแมว",
+            (Theme::Cat, "siamsi") => "แมวขอบคุณ",
             _ => "ไม่ทำอะไร",
         }
     }
@@ -161,10 +188,12 @@ pub struct ShrineApp {
     shows_finished: u64,
     gifts_received: u64,
     // settings edit buffers
+    cats: CatStage,
     gift_rows: Vec<(String, String)>,
     gift_rows_theme: Theme,
     fortunes_text: String,
     blessings_text: String,
+    thanks_text: String,
     flash_msg: (String, f32),
     pos_edit: Option<(f32, f32)>,
     pub updater: crate::updater::Updater,
@@ -204,10 +233,15 @@ impl ShrineApp {
         let settings_tab = init.shot.as_ref().and_then(|s| s.settings_tab).unwrap_or(0);
         let theme = Theme::from_key(&cfg.theme.mode);
         let mut app = Self {
+            cats: match init.seed {
+                Some(s) => CatStage::with_seed(s.wrapping_add(0xCA7)),
+                None => CatStage::new(),
+            },
             gift_rows: vec![],
             gift_rows_theme: theme,
             fortunes_text: cfg.siamsi.fortunes.join("\n"),
             blessings_text: cfg.krathong.blessings.join("\n"),
+            thanks_text: cfg.cat.thanks.join("\n"),
             cfg,
             cfg_path: init.cfg_path,
             rx: init.rx,
@@ -258,7 +292,13 @@ impl ShrineApp {
 
     fn load_gift_rows(&mut self) {
         let th = self.theme();
-        let map = if th == Theme::Krathong && !self.cfg.krathong.gifts.is_empty() { &self.cfg.krathong.gifts } else { &self.cfg.gifts };
+        let map = if th == Theme::Krathong && !self.cfg.krathong.gifts.is_empty() {
+            &self.cfg.krathong.gifts
+        } else if th == Theme::Cat && !self.cfg.cat.gifts.is_empty() {
+            &self.cfg.cat.gifts
+        } else {
+            &self.cfg.gifts
+        };
         self.gift_rows = map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         self.gift_rows_theme = th;
     }
@@ -275,6 +315,7 @@ impl ShrineApp {
         match th {
             Theme::Shrine => ground_for(self.vh()),
             Theme::Krathong => kr::bank_y(self.vh()),
+            Theme::Cat => cat::floor_y(self.vh()),
         }
     }
 
@@ -291,11 +332,25 @@ impl ShrineApp {
             })
             .collect();
         let theme = self.theme();
-        let list = if theme == Theme::Krathong { self.cfg.krathong.blessings.clone() } else { self.cfg.siamsi.fortunes.clone() };
+        let list = match theme {
+            Theme::Krathong => self.cfg.krathong.blessings.clone(),
+            Theme::Cat => self.cfg.cat.thanks.clone(),
+            Theme::Shrine => self.cfg.siamsi.fortunes.clone(),
+        };
         let pick = self.rng.usize(0..list.len().max(1));
         let text = list.get(pick).cloned().unwrap_or_default();
         let clean = display_name(user);
         let user = if clean.is_empty() { "ผู้ชม".to_string() } else { truncate(&clean, 18) };
+        if theme == Theme::Cat {
+            self.cats.enqueue(CatIn {
+                action,
+                user,
+                tier,
+                tier_name,
+                text,
+            });
+            return;
+        }
         let look = appearance_for(&user);
         let bursts = burst_plan(tier, &mut self.rng);
         let vh = self.vh();
@@ -335,7 +390,10 @@ impl ShrineApp {
             Incoming::Control(c) => match c {
                 ControlCmd::ClickThrough(v) => self.cfg.window.click_through = v.unwrap_or(!self.cfg.window.click_through),
                 ControlCmd::Background(b) => self.cfg.window.background = b,
-                ControlCmd::ClearQueue => self.queue.clear(),
+                ControlCmd::ClearQueue => {
+                    self.queue.clear();
+                    self.cats.clear();
+                }
                 ControlCmd::Running(r) => {
                     self.running = r;
                     self.reconnect();
@@ -390,6 +448,7 @@ impl ShrineApp {
         self.load_gift_rows();
         self.fortunes_text = self.cfg.siamsi.fortunes.join("\n");
         self.blessings_text = self.cfg.krathong.blessings.join("\n");
+        self.thanks_text = self.cfg.cat.thanks.join("\n");
         self.flash("โหลดการตั้งค่าใหม่แล้ว".into());
     }
 
@@ -401,23 +460,26 @@ impl ShrineApp {
             (Theme::Shrine, Action::Siamsi) => (WALK, 6.4, reveal + 0.6, OUT),
             (Theme::Krathong, Action::Pray) => (WALK, kr_push_end(Action::Pray) + 0.5, reveal, OUT),
             (Theme::Krathong, Action::Siamsi) => (WALK, kr_push_end(Action::Siamsi) + 0.5, reveal + 0.6, OUT),
+            (Theme::Cat, _) => (cat::WALK_MAX, cat::POUR + cat::EAT, reveal, cat::LEAVE),
         }
     }
     fn target_x(th: Theme) -> f32 {
         match th {
             Theme::Shrine => PRAY_X,
             Theme::Krathong => kr::KNEEL_X,
+            Theme::Cat => cat::stand_x(),
         }
     }
     fn char_scale(th: Theme) -> f32 {
         match th {
             Theme::Shrine => 1.2,
             Theme::Krathong => 1.1,
+            Theme::Cat => 1.0,
         }
     }
 
     fn active(&self) -> bool {
-        self.current.is_some() || !self.queue.is_empty() || self.gap > 0.0 || self.particles.iter().any(|p| !matches!(p.kind, 3 | 4 | 8))
+        self.current.is_some() || !self.queue.is_empty() || self.cats.busy() || self.gap > 0.0 || self.particles.iter().any(|p| !matches!(p.kind, 3 | 4 | 8))
     }
 
     // ------------------------------------------------------------------ simulation
@@ -469,6 +531,13 @@ impl ShrineApp {
 
         self.step_line(dt);
         let theme = self.theme();
+        if theme == Theme::Cat {
+            let before_s = self.cats.started;
+            let before_f = self.cats.finished;
+            self.cats.tick(dt, self.cfg.cat.max_visible, self.cfg.timing.reveal_seconds, self.vh());
+            self.shows_started += self.cats.started.saturating_sub(before_s);
+            self.shows_finished += self.cats.finished.saturating_sub(before_f);
+        }
         if active || idle_mode == "ambient" {
             self.spawn_ambient(dt, theme);
         } else if idle_mode == "still" {
@@ -478,6 +547,7 @@ impl ShrineApp {
                     p.life = p.life.min(0.5);
                 }
             }
+            self.cats.fade_ambient();
         }
         if !freeze {
             self.step_particles(dt);
@@ -590,6 +660,7 @@ impl ShrineApp {
                     self.step_stick(s, dt, g);
                 }
             }
+            Theme::Cat => {}
             Theme::Krathong => {
                 let push_end = kr_push_end(s.action);
                 if !s.released && a >= push_end {
@@ -691,6 +762,7 @@ impl ShrineApp {
         let (first, gap, min_x) = match th {
             Theme::Shrine => (tx - if big { 330.0 } else { 180.0 }, 145.0, 60.0),
             Theme::Krathong => (tx - if big { 250.0 } else { 125.0 }, 118.0, 45.0),
+            Theme::Cat => (tx - if big { 200.0 } else { 160.0 }, 160.0, 50.0),
         };
         let x = first - gap * k as f32;
         (x >= min_x).then_some(x)
@@ -813,6 +885,7 @@ impl ShrineApp {
                     p.bow = 0.12 + 0.1 * env * ((a - 0.7) * std::f32::consts::TAU * 3.0).cos().abs();
                     p.expr = if a < POP { 1 } else { 2 };
                 }
+                (Theme::Cat, _) => {}
                 (Theme::Krathong, act) => {
                     let (ws, we) = kr_wish_window(act);
                     let pe = kr_push_end(act);
@@ -959,6 +1032,9 @@ impl ShrineApp {
                     self.particles.push(p);
                 }
             }
+            Theme::Cat => {
+                self.cats.spawn_ambient(dt, busy > 0 || self.cats.busy());
+            }
         }
     }
 
@@ -967,10 +1043,15 @@ impl ShrineApp {
         let launch_y = match theme {
             Theme::Shrine => ground_for(vh),
             Theme::Krathong => kr::water_top(vh),
+            Theme::Cat => cat::floor_y(vh),
         };
         match kind {
             0 => {
-                let cxx = if theme == Theme::Krathong { 650.0 } else { 430.0 };
+                let cxx = match theme {
+                    Theme::Krathong => 650.0,
+                    Theme::Cat => 540.0,
+                    Theme::Shrine => 430.0,
+                };
                 for _ in 0..(30 + tier * 20) {
                     let a = self.rng.f32() * std::f32::consts::TAU;
                     let sp = 80.0 + self.rng.f32() * (120.0 + tier as f32 * 60.0);
@@ -1097,6 +1178,8 @@ impl ShrineApp {
         cx.soft = bg != "green";
         if theme == Theme::Krathong {
             cx.gy = Some(kr::bank_y(cx.vh));
+        } else if theme == Theme::Cat {
+            cx.gy = Some(cat::floor_y(cx.vh));
         }
         // camera: zoom on the landed เซียมซี stick + screen shake
         if let Some(s) = &self.current {
@@ -1120,6 +1203,7 @@ impl ShrineApp {
         match theme {
             Theme::Shrine => self.draw_shrine_world(&cx, sprites, &bg),
             Theme::Krathong => self.draw_krathong_world(&cx, sprites, &bg),
+            Theme::Cat => self.cats.draw_world(&cx, &bg, self.cfg.timing.reveal_seconds, self.cfg.cat.max_visible),
         }
         draw_particles(&cx, &self.particles, false);
 
@@ -1133,6 +1217,12 @@ impl ShrineApp {
                 shimmer(&ui_cx, fade);
             }
             self.draw_reveal(&ui_cx, s);
+        }
+        if theme == Theme::Cat {
+            if self.cats.shows().next().map(|s| s.tier >= 4).unwrap_or(false) {
+                shimmer(&ui_cx, 0.55);
+            }
+            self.cats.draw_overlay(&ui_cx, &self.cfg.cat.thanks_title, self.cfg.timing.reveal_seconds);
         }
         self.draw_hud(&ui_cx);
     }
@@ -1263,7 +1353,11 @@ impl ShrineApp {
     fn pray_geo(&self, s: &Show) -> PrayGeo {
         let rows = s.numbers.len();
         let tier = s.tier;
-        let cxx = if s.theme == Theme::Krathong { 650.0 } else { 430.0 };
+        let cxx = match s.theme {
+            Theme::Krathong => 650.0,
+            Theme::Cat => 540.0,
+            Theme::Shrine => 430.0,
+        };
         let top = 30.0;
         let row_h = 118.0;
         let hgt = 110.0 + rows as f32 * row_h;
@@ -1288,6 +1382,8 @@ impl ShrineApp {
             return;
         }
         match (s.action, s.theme) {
+            // cat mode never shows lucky numbers: its thank-you card is drawn by cat::Stage
+            (_, Theme::Cat) => {}
             (Action::Pray, _) => self.draw_number_card(cx, s, rt, r),
             (Action::Siamsi, Theme::Shrine) => self.draw_scroll(cx, s, rt, r),
             (Action::Siamsi, Theme::Krathong) => self.draw_blessing(cx, s, rt, r),
@@ -1307,7 +1403,11 @@ impl ShrineApp {
             cx.glow(geo.cxx, top + geo.hgt / 2.0, geo.wdt * 0.8, GOLD, 0.4 * alpha);
         }
         cx.rect(x0 + 8.0, top + 12.0, x1 + 8.0, top + geo.hgt + 12.0, 26.0, rgba(0, 0, 0, 0.3 * alpha));
-        let (c_top, c_bot) = if s.theme == Theme::Krathong { (rgba(36, 48, 120, 0.96 * alpha), rgba(14, 18, 64, 0.96 * alpha)) } else { (rgba(170, 26, 46, 0.96 * alpha), rgba(96, 8, 24, 0.96 * alpha)) };
+        let (c_top, c_bot) = match s.theme {
+            Theme::Krathong => (rgba(36, 48, 120, 0.96 * alpha), rgba(14, 18, 64, 0.96 * alpha)),
+            Theme::Cat => (rgba(255, 236, 214, 0.96 * alpha), rgba(255, 210, 180, 0.96 * alpha)),
+            Theme::Shrine => (rgba(170, 26, 46, 0.96 * alpha), rgba(96, 8, 24, 0.96 * alpha)),
+        };
         cx.vgradient(x0, top, x1, top + geo.hgt, c_top, c_bot);
         cx.rect_line(x0, top, x1, top + geo.hgt, 18.0, 5.0 + tier as f32, with_a(border, alpha));
         cx.rect_line(x0 + 12.0, top + 12.0, x1 - 12.0, top + geo.hgt - 12.0, 12.0, 2.0, with_a(border, 0.55 * alpha));
@@ -1462,24 +1562,33 @@ impl ShrineApp {
     }
 
     fn draw_hud(&self, cx: &Cx) {
-        if !self.queue.is_empty() {
-            let names: Vec<&str> = self.queue.iter().take(3).map(|s| s.user.as_str()).collect();
-            let more = self.queue.len().saturating_sub(3);
+        let waiting: Vec<&str> = if self.theme() == Theme::Cat {
+            self.cats.waiting_names()
+        } else {
+            self.queue.iter().map(|s| s.user.as_str()).collect()
+        };
+        if !waiting.is_empty() {
+            let names = waiting.iter().take(3).copied().collect::<Vec<_>>();
+            let more = waiting.len().saturating_sub(3);
             let txt = if more > 0 { format!("ถัดไป: {}  +{}", names.join(", "), more) } else { format!("ถัดไป: {}", names.join(", ")) };
             let m = cx.measure(&txt, 24.0, true);
             cx.rect(16.0, cx.vh - 60.0, 44.0 + m.x, cx.vh - 16.0, 22.0, rgba(0, 0, 0, 0.55));
             cx.text(30.0, cx.vh - 38.0, Align2::LEFT_CENTER, &txt, 24.0, Color32::WHITE, true);
         }
-        let idle = self.current.is_none() && self.queue.is_empty();
+        let idle = self.current.is_none() && self.queue.is_empty() && !self.cats.busy();
         if self.cfg.window.show_status && !self.status.is_empty() && idle {
             cx.text_o(VW - 16.0, 24.0, Align2::RIGHT_CENTER, &self.status, 20.0, Color32::WHITE, rgba(0, 0, 0, 0.8), false);
         }
         if !self.running {
             cx.text_o(VW - 16.0, 56.0, Align2::RIGHT_CENTER, "หยุดรับของขวัญชั่วคราว", 22.0, rgba(255, 120, 120, 1.0), rgba(0, 0, 0, 0.8), true);
         }
-        let hint = if self.theme() == Theme::Krathong { &self.cfg.krathong.hint_text } else { &self.cfg.window.hint_text };
+        let hint = match self.theme() {
+            Theme::Krathong => &self.cfg.krathong.hint_text,
+            Theme::Cat => &self.cfg.cat.hint_text,
+            Theme::Shrine => &self.cfg.window.hint_text,
+        };
         if self.cfg.window.show_hint && idle && !hint.is_empty() {
-            let y = if self.theme() == Theme::Krathong { 36.0 } else { cx.vh - 40.0 };
+            let y = if matches!(self.theme(), Theme::Krathong | Theme::Cat) { 36.0 } else { cx.vh - 40.0 };
             cx.text_o(VW / 2.0, y, Align2::CENTER_CENTER, hint, 28.0, GOLD, rgba(60, 0, 10, 0.95), true);
         }
         if self.flash_msg.1 > 0.0 {
@@ -1492,8 +1601,26 @@ impl ShrineApp {
         if self.frame % 6 != 0 {
             return;
         }
-        let cur = self.current.as_ref().map(|s| serde_json::json!({"action": format!("{:?}", s.action), "theme": s.theme.key(), "user": s.user, "tier": s.tier + 1, "t": s.t}));
-        let queued: Vec<serde_json::Value> = self.queue.iter().map(|s| serde_json::json!({"action": format!("{:?}", s.action), "user": s.user, "tier": s.tier + 1})).collect();
+        let cur = if self.theme() == Theme::Cat {
+            let rv = self.cfg.timing.reveal_seconds;
+            // cat mode: the result is always a thank-you card, never lucky numbers
+            self.cats.shows().next().map(|s| serde_json::json!({"action": format!("{:?}", s.action), "theme": "cat", "user": s.user, "tier": s.tier + 1, "t": s.t, "phase": s.phase(rv), "card": "thanks"}))
+        } else {
+            self.current.as_ref().map(|s| {
+                let card = match (s.action, s.theme) {
+                    (_, Theme::Cat) => "thanks",
+                    (Action::Pray, _) => "numbers",
+                    (Action::Siamsi, Theme::Shrine) => "fortune",
+                    (Action::Siamsi, Theme::Krathong) => "blessing",
+                };
+                serde_json::json!({"action": format!("{:?}", s.action), "theme": s.theme.key(), "user": s.user, "tier": s.tier + 1, "t": s.t, "card": card})
+            })
+        };
+        let queued: Vec<serde_json::Value> = if self.theme() == Theme::Cat {
+            self.cats.shows().skip(1).map(|s| serde_json::json!({"action": format!("{:?}", s.action), "user": s.user, "tier": s.tier + 1})).collect()
+        } else {
+            self.queue.iter().map(|s| serde_json::json!({"action": format!("{:?}", s.action), "user": s.user, "tier": s.tier + 1})).collect()
+        };
         let (w, h) = self.cfg.window_size();
         let v = serde_json::json!({
             "version": env!("CARGO_PKG_VERSION"),
@@ -1511,8 +1638,12 @@ impl ShrineApp {
             "test_tier": self.test_tier + 1,
             "current": cur,
             "queue": queued,
-            "queue_len": self.queue.len(),
-            "line": self.queue.iter().filter_map(|s| s.qx.map(|x| serde_json::json!({"user": s.user, "x": x.round()}))).collect::<Vec<_>>(),
+            "queue_len": if self.theme() == Theme::Cat { self.cats.len().saturating_sub(1) } else { self.queue.len() },
+            "line": if self.theme() == Theme::Cat {
+                self.cats.shows().skip(1).map(|s| serde_json::json!({"user": s.user, "x": s.x.round()})).collect::<Vec<_>>()
+            } else {
+                self.queue.iter().filter_map(|s| s.qx.map(|x| serde_json::json!({"user": s.user, "x": x.round()}))).collect::<Vec<_>>()
+            },
             "floating": self.floating.len(),
             "particles": self.particles.len(),
             "shows_started": self.shows_started,
@@ -1622,12 +1753,13 @@ impl ShrineApp {
                 self.cfg.window.background = next.into();
             } else if k == Key::F2 {
                 self.sync_edit_buffers();
-                let next = if self.theme() == Theme::Shrine { Theme::Krathong } else { Theme::Shrine };
+                let next = self.theme().next();
                 self.cfg.theme.mode = next.key().into();
                 self.load_gift_rows();
-                self.flash(format!("โหมด: {}", if next == Theme::Krathong { "ลอยกระทง" } else { "ไหว้พระ / เซียมซี" }));
+                self.flash(format!("โหมด: {}", next.title()));
             } else if k == Key::Delete {
                 self.queue.clear();
+                self.cats.clear();
             }
         }
     }
@@ -1668,6 +1800,7 @@ impl ShrineApp {
         match self.gift_rows_theme {
             Theme::Shrine => self.cfg.gifts = map,
             Theme::Krathong => self.cfg.krathong.gifts = map,
+            Theme::Cat => self.cfg.cat.gifts = map,
         }
         let f: Vec<String> = self.fortunes_text.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
         if !f.is_empty() {
@@ -1676,6 +1809,10 @@ impl ShrineApp {
         let b: Vec<String> = self.blessings_text.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
         if !b.is_empty() {
             self.cfg.krathong.blessings = b;
+        }
+        let thx: Vec<String> = self.thanks_text.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+        if !thx.is_empty() {
+            self.cfg.cat.thanks = thx;
         }
     }
 
@@ -1754,9 +1891,9 @@ impl ShrineApp {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("โหมด:").size(18.0).strong());
             let cur = self.theme();
-            for (th, label) in [(Theme::Shrine, "ไหว้พระ / เสี่ยงเซียมซี"), (Theme::Krathong, "ลอยกระทง")] {
+            for (th, label) in [(Theme::Shrine, "ไหว้พระ / เสี่ยงเซียมซี"), (Theme::Krathong, "ลอยกระทง"), (Theme::Cat, "ให้อาหารแมว")] {
                 let sel = cur == th;
-                let b = egui::Button::new(egui::RichText::new(label).size(18.0).strong().color(if sel { Color32::WHITE } else { Color32::LIGHT_GRAY })).fill(if sel { Color32::from_rgb(170, 110, 20) } else { Color32::from_gray(50) }).min_size(Vec2::new(200.0, 40.0)).corner_radius(10);
+                let b = egui::Button::new(egui::RichText::new(label).size(16.0).strong().color(if sel { Color32::WHITE } else { Color32::LIGHT_GRAY })).fill(if sel { Color32::from_rgb(170, 110, 20) } else { Color32::from_gray(50) }).min_size(Vec2::new(170.0, 40.0)).corner_radius(10);
                 if ui.add(b).clicked() && !sel {
                     self.sync_edit_buffers();
                     self.cfg.theme.mode = th.key().into();
@@ -1776,12 +1913,17 @@ impl ShrineApp {
             let st = if self.running { "กำลังทำงาน - รับของขวัญอยู่" } else { "หยุดชั่วคราว - ไม่รับของขวัญ" };
             ui.label(egui::RichText::new(st).size(18.0).strong());
             ui.label(egui::RichText::new(format!("สถานะ TikTok: {}", if self.status.is_empty() { "-" } else { &self.status })).size(16.0));
-            ui.label(egui::RichText::new(format!("คิว: {} คน   |   กำลังเล่น: {}", self.queue.len(), self.current.as_ref().map(|s| s.user.as_str()).unwrap_or("-"))).size(16.0));
+            let (qlen, playing) = if self.theme() == Theme::Cat {
+                (self.cats.len().saturating_sub(if self.cats.front_user().is_some() { 1 } else { 0 }), self.cats.front_user().unwrap_or("-"))
+            } else {
+                (self.queue.len(), self.current.as_ref().map(|s| s.user.as_str()).unwrap_or("-"))
+            };
+            ui.label(egui::RichText::new(format!("คิว: {qlen} คน   |   กำลังเล่น: {playing}")).size(16.0));
         });
         ui.add_space(10.0);
         ui.group(|ui| {
             ui.label(egui::RichText::new("ปุ่มลัด (คลิกที่หน้าต่างเอฟเฟกต์ก่อน)").strong());
-            ui.label("1 = การกระทำที่ 1 (ไหว้พระ / ลอยกระทง)   2 = การกระทำที่ 2 (เซียมซี / อธิษฐาน)   Shift+1..5 = เลือกระดับทดสอบ");
+            ui.label("1 = การกระทำที่ 1 (ไหว้พระ / ลอยกระทง / ให้อาหารแมว)   2 = การกระทำที่ 2 (เซียมซี / อธิษฐาน / แมวขอบคุณ)   Shift+1..5 = เลือกระดับทดสอบ");
             ui.label("Q W E R T = การกระทำที่ 1 ระดับ 1-5   |   A S D F G = การกระทำที่ 2 ระดับ 1-5   F2 = สลับโหมด");
             ui.label("F1 หรือ คลิกขวา = เปิด/ปิดหน้าตั้งค่า   F8 = คลิกทะลุ   F9 = สลับพื้นหลัง");
             ui.label("Delete = ล้างคิว   Ctrl+Q (Mac: Cmd+Q) = ปิดโปรแกรม   ลากหน้าต่างเพื่อย้ายตำแหน่ง");
@@ -1859,7 +2001,7 @@ impl ShrineApp {
             ui.vertical(|ui| {
                 ui.radio_value(&mut self.cfg.window.background, "transparent".to_string(), "โปร่งใส (ลอยทับจอ)");
                 ui.radio_value(&mut self.cfg.window.background, "green".to_string(), "สีเขียว (Chroma Key)");
-                ui.radio_value(&mut self.cfg.window.background, "scene".to_string(), "ฉากเต็มพื้นหลัง (วัด / แม่น้ำยามค่ำ)");
+                ui.radio_value(&mut self.cfg.window.background, "scene".to_string(), "ฉากเต็มพื้นหลัง (วัด / แม่น้ำยามค่ำ / มุมแมว)");
             });
             ui.end_row();
             ui.label("ลอยอยู่บนสุดเสมอ");
@@ -1879,10 +2021,10 @@ impl ShrineApp {
             ui.checkbox(&mut self.cfg.window.show_hint, "");
             ui.end_row();
             ui.label("ข้อความคำแนะนำ");
-            if self.theme() == Theme::Krathong {
-                ui.add(egui::TextEdit::singleline(&mut self.cfg.krathong.hint_text).desired_width(330.0));
-            } else {
-                ui.add(egui::TextEdit::singleline(&mut self.cfg.window.hint_text).desired_width(330.0));
+            match self.theme() {
+                Theme::Krathong => { ui.add(egui::TextEdit::singleline(&mut self.cfg.krathong.hint_text).desired_width(330.0)); }
+                Theme::Cat => { ui.add(egui::TextEdit::singleline(&mut self.cfg.cat.hint_text).desired_width(330.0)); }
+                Theme::Shrine => { ui.add(egui::TextEdit::singleline(&mut self.cfg.window.hint_text).desired_width(330.0)); }
             }
             ui.end_row();
             ui.label("แสดงสถานะการเชื่อมต่อ");
@@ -1904,9 +2046,15 @@ impl ShrineApp {
             self.load_gift_rows();
         }
         let th = self.theme();
-        ui.heading(format!("ของขวัญ -> การกระทำ (โหมด{})", if th == Theme::Krathong { "ลอยกระทง" } else { "ไหว้พระ" }));
+        ui.heading(format!("ของขวัญ -> การกระทำ (โหมด{})", match th {
+            Theme::Krathong => "ลอยกระทง",
+            Theme::Cat => "ให้อาหารแมว",
+            Theme::Shrine => "ไหว้พระ",
+        }));
         if th == Theme::Krathong {
             ui.label("โหมดลอยกระทงมีตารางของตัวเอง (ถ้าว่างจะใช้ตารางของโหมดไหว้พระ)");
+        } else if th == Theme::Cat {
+            ui.label("โหมดให้อาหารแมวมีตารางของตัวเอง (ถ้าว่างจะใช้ตารางของโหมดไหว้พระ)");
         }
         ui.label("ใส่ชื่อของขวัญภาษาอังกฤษตามที่ TikTok ใช้ (เช่น Rose, TikTok, Finger Heart) หรือเลข gift id");
         let mut remove = None;
@@ -2010,6 +2158,14 @@ impl ShrineApp {
         });
         ui.label(format!("คำทำนาย 1 บรรทัด = 1 ใบ (ตอนนี้ {} ใบ)", self.fortunes_text.lines().filter(|l| !l.trim().is_empty()).count()));
         ui.add(egui::TextEdit::multiline(&mut self.fortunes_text).desired_rows(14).desired_width(f32::INFINITY));
+        ui.separator();
+        ui.heading("ให้อาหารแมว: คำขอบคุณ");
+        ui.horizontal(|ui| {
+            ui.label("หัวข้อ");
+            ui.text_edit_singleline(&mut self.cfg.cat.thanks_title);
+        });
+        ui.label(format!("1 บรรทัด = 1 ข้อความ (ตอนนี้ {} ข้อ)", self.thanks_text.lines().filter(|l| !l.trim().is_empty()).count()));
+        ui.add(egui::TextEdit::multiline(&mut self.thanks_text).desired_rows(8).desired_width(f32::INFINITY));
         self.sync_edit_buffers();
     }
 
@@ -2022,17 +2178,18 @@ impl ShrineApp {
             }
         });
         ui.horizontal(|ui| {
-            if ui.add(egui::Button::new(egui::RichText::new(if self.theme() == Theme::Krathong { "ทดสอบ ลอยกระทงขอเลข" } else { "ทดสอบ ไหว้พระขอเลข" }).size(18.0)).min_size(Vec2::new(240.0, 48.0))).clicked() {
+            if ui.add(egui::Button::new(egui::RichText::new(self.theme().action_label("pray")).size(18.0)).min_size(Vec2::new(240.0, 48.0))).clicked() {
                 let n = test_name(&mut self.rng);
                 self.enqueue(Action::Pray, &n, self.tier_min(self.test_tier), self.test_tier);
             }
-            if ui.add(egui::Button::new(egui::RichText::new(if self.theme() == Theme::Krathong { "ทดสอบ อธิษฐาน" } else { "ทดสอบ เซียมซี" }).size(18.0)).min_size(Vec2::new(200.0, 48.0))).clicked() {
+            if ui.add(egui::Button::new(egui::RichText::new(self.theme().action_label("siamsi")).size(18.0)).min_size(Vec2::new(200.0, 48.0))).clicked() {
                 let n = test_name(&mut self.rng);
                 self.enqueue(Action::Siamsi, &n, self.tier_min(self.test_tier), self.test_tier);
             }
         });
         if ui.button("ล้างคิว").clicked() {
             self.queue.clear();
+            self.cats.clear();
         }
         ui.separator();
         ui.label("ทดสอบผ่าน HTTP (เช่นจาก TikFinity / เบราว์เซอร์):");

@@ -7,3 +7,6 @@
 config.local.toml
 /bridge/bridge.cjs
 /target-main
+/target-*
+screenshots/**/raw/
+.bin/
