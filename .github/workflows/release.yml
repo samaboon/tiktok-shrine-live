@@ -1,5 +1,7 @@
 name: build-release
 
+# Tag pushes (v*) build all artifacts and publish a GitHub Release.
+# workflow_dispatch builds and uploads the same artifacts without publishing.
 on:
   push:
     tags: ["v*"]
@@ -64,16 +66,35 @@ jobs:
           path: dist/TikTokShrineLive-Linux-x64.tar.gz
 
   bridge:
-    # the TikTok connector bundle, so the app can update only the bridge ("อัปเดตตัวเชื่อม TikTok")
+    # Build the TikTok connector bundle (bridge.js) so the app can update only the
+    # bridge ("อัปเดตตัวเชื่อม TikTok") from a release artifact, without a full app rebuild.
+    # Locked dependency versions (package-lock.json) are used here; the separate
+    # bridge-latest workflow refreshes tiktok-live-connector@latest on demand.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Build TikTok bridge bundle
+        working-directory: bridge
+        run: |
+          npm ci --no-audit --no-fund
+          npx esbuild bridge.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=dist/bridge.cjs
+          node <<'NODE'
+            const fs = require('fs');
+            const v = require('./node_modules/tiktok-live-connector/package.json').version;
+            fs.writeFileSync('dist/bridge-version.json', JSON.stringify({ connector: v }) + '\n');
+            console.log(fs.readFileSync('dist/bridge-version.json', 'utf8').trim());
+          NODE
+          test -s dist/bridge.cjs
       - uses: actions/upload-artifact@v5
         with:
           name: bridge
           path: |
             bridge/dist/bridge.cjs
             bridge/dist/bridge-version.json
+          if-no-files-found: error
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
