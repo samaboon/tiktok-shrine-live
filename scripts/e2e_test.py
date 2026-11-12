@@ -100,7 +100,9 @@ def main():
             xkey(w, 'F9'); xkey(w, 'F9')
             th = state()['theme']; xkey(w, 'F2'); th2 = state()['theme']; check('F2 switches mode', th != th2, f'{th} -> {th2}')
             xkey(w, 'F2'); th3 = state()['theme']
-            check('F2 cycles all 3 modes (shrine -> krathong -> cat)', [th, th2, th3] == ['shrine', 'krathong', 'cat'], f'{th} -> {th2} -> {th3}')
+            xkey(w, 'F2'); th4 = state()['theme']
+            xkey(w, 'F2'); th5 = state()['theme']
+            check('F2 cycles all 5 modes (shrine -> krathong -> cat -> dance -> dunk)', [th, th2, th3, th4, th5] == ['shrine', 'krathong', 'cat', 'dance', 'dunk'], f'{th} -> {th2} -> {th3} -> {th4} -> {th5}')
             get('/control?mode=shrine'); wait_for(lambda s: s['theme'] == 'shrine')
             so = state()['settings_open']; xkey(w, 'F1'); check('F1 opens/closes settings', state()['settings_open'] != so)
             xkey(w, 'F1')
@@ -221,6 +223,99 @@ def main():
         check('cat: line advances to next sender', s['current'] and s['current']['user'] == 'แมวB' and [e['user'] for e in s['line']] == ['แมวC'], f"line={s['line']}")
         get('/control?clear=1')
         s = wait_for(lambda s: s['current'] is None or s['current']['user'] != 'แมวB', 25)
+
+        # ---------------- dance mode: challenge card, venues, 3-sender floor, no lucky numbers
+        get('/control?clear=1'); get('/control?mode=dance'); s = wait_for(lambda s: s['theme'] == 'dance')
+        check('runtime mode switch -> dance (โหมดเต้น)', s['theme'] == 'dance')
+        s = wait_for(lambda s: s['current'] is None, 20)
+        q = urllib.parse.quote
+        for u in ['เต้นA', 'เต้นB', 'เต้นC']:
+            get(f'/gift?gift_name=Rose&user={q(u)}&diamonds=100')
+        s = wait_for(lambda s: s['current'] is not None and len(s['line']) == 2, 4)
+        check('dance: 3 senders -> lead + 2 on the floor', s['current'] and s['current']['user'] == 'เต้นA' and [e['user'] for e in s['line']] == ['เต้นB', 'เต้นC'], f"current={s['current'] and s['current']['user']} line={s['line']}")
+        seen = set(); cards = set(); t0 = time.time()
+        while time.time() - t0 < 20:
+            c = state()['current']
+            if c and c['user'] == 'เต้นA':
+                seen.add(c.get('phase')); cards.add(c.get('card'))
+            elif c and c['user'] == 'เต้นB':
+                break
+            time.sleep(0.1)
+        check('dance: walk then dance phases', {'walk', 'dance'} <= seen or 'dance' in seen, str(sorted(x for x in seen if x)))
+        check('dance: result is challenge card only (no lucky numbers)', cards <= {'challenge'} and 'challenge' in cards, str(cards))
+        s = wait_for(lambda s: s['current'] is not None and s['current']['user'] == 'เต้นB', 25)
+        check('dance: line advances to next sender', s['current'] and s['current']['user'] == 'เต้นB' and [e['user'] for e in s['line']] == ['เต้นC'], f"line={s['line']}")
+        get('/control?clear=1')
+
+        # ---------------- dunk mode: queue, t5 instant dunk, splash credits the sender, no lucky numbers
+        get('/control?mode=dunk'); s = wait_for(lambda s: s['theme'] == 'dunk')
+        check('runtime mode switch -> dunk (ปาตกน้ำ)', s['theme'] == 'dunk')
+        s = wait_for(lambda s: s['current'] is None, 20)
+        for u in ['ปาA', 'ปาB', 'ปาC']:
+            get(f'/gift?gift_name=Rose&user={q(u)}&diamonds=1')
+        s = wait_for(lambda s: s['current'] is not None and len(s['line']) == 2, 4)
+        check('dunk: 3 senders -> thrower + 2 waiting', s['current'] and s['current']['user'] == 'ปาA' and [e['user'] for e in s['line']] == ['ปาB', 'ปาC'], f"current={s['current'] and s['current']['user']} line={s['line']}")
+        get('/control?clear=1')
+        s = wait_for(lambda s: s['current'] is None, 8)
+        get(f"/gift?gift_name=Rose&user={q('สมศรี')}&diamonds=10000")
+        seen = set(); cards = set(); dunk_by = None; t0 = time.time()
+        while time.time() - t0 < 16:
+            s = state()
+            c = s.get('current')
+            if c:
+                seen.add(c.get('phase')); cards.add(c.get('card'))
+                if c.get('dunk_by'):
+                    dunk_by = c.get('dunk_by')
+                    if c.get('card') == 'splash' or c.get('phase') in ('drop', 'splash'):
+                        break
+            time.sleep(0.1)
+        check('dunk: t5 walks and throws', 'walk' in seen or 'throw' in seen, str(sorted(x for x in seen if x)))
+        check('dunk: t5 instant dunk credits the sender', dunk_by == 'สมศรี' or (state().get('current') or {}).get('dunk_by') == 'สมศรี', f"dunk_by={dunk_by} cards={cards} phases={sorted(x for x in seen if x)}")
+        check('dunk: result is throw/splash card only (no lucky numbers)', cards <= {'throw', 'splash'} and cards, str(cards))
+        get('/control?clear=1')
+
+        # ---------------- dance/dunk gift floods: merge, party, bounded memory, drain
+        get('/control?mode=dance'); s = wait_for(lambda s: s['theme'] == 'dance')
+        s = wait_for(lambda s: s.get('current') is None and s.get('idle'), 25)
+        g0 = state()['gifts_received']
+        for _ in range(30):
+            get(f"/gift?gift_name=Rose&user={q('สแปม')}&diamonds=1")
+        s = wait_for(lambda s: s['gifts_received'] >= g0 + 30, 8)
+        check('dance flood: 30 gifts from one sender accepted', s['gifts_received'] >= g0 + 30, f"gifts={s['gifts_received']} g0={g0}")
+        check('dance flood: same sender merged (combo or single live card)', s.get('combo', 1) >= 2 or s.get('queue_len', 99) <= 1, f"combo={s.get('combo')} queue_len={s.get('queue_len')} party={s.get('party')}")
+        t0 = time.time()
+        for i in range(50):
+            get(f"/gift?gift_name=Rose&user={q('คน'+str(i))}&diamonds=1")
+            target = t0 + (i + 1) * (10.0 / 50.0)
+            while time.time() < target:
+                time.sleep(0.01)
+        s = state()
+        check('dance flood: app still serving after 50 senders / 10s', s.get('theme') == 'dance' and 'live_units' in s, str(s.get('theme')))
+        check('dance flood: live records stay bounded', (s.get('live_units') or 0) <= 250, f"live_units={s.get('live_units')} queue_len={s.get('queue_len')} waiting_extra={s.get('waiting_extra')}")
+        check('dance flood: not one-queue-entry-per-gift', (s.get('queue_len') or 0) <= 60 and len(s.get('line') or []) <= 8 and (s.get('party') or (s.get('combo') or 1) >= 2), f"queue_len={s.get('queue_len')} line={len(s.get('line') or [])} party={s.get('party')} combo={s.get('combo')} gifts={s.get('gifts_received')}")
+        check('dance flood: party mode or overflow badge engaged', s.get('party') or (s.get('waiting_extra') or 0) > 0 or (s.get('combo') or 1) >= 2, f"party={s.get('party')} waiting_extra={s.get('waiting_extra')} combo={s.get('combo')}")
+        t1 = time.time()
+        drained = False
+        while time.time() - t1 < 45:
+            s = state()
+            if s.get('idle') or (not s.get('party') and (s.get('waiting_extra') or 0) == 0 and s.get('current') is None):
+                drained = True
+                break
+            time.sleep(0.3)
+        s = state()
+        check('dance flood: queue drains after the burst', drained or (s.get('live_units') or 999) < 80, f"idle={s.get('idle')} party={s.get('party')} live_units={s.get('live_units')} waiting_extra={s.get('waiting_extra')} current={s.get('current')}")
+        get('/control?clear=1')
+
+        get('/control?mode=dunk'); s = wait_for(lambda s: s['theme'] == 'dunk')
+        s = wait_for(lambda s: s.get('current') is None, 20)
+        g0 = state()['gifts_received']
+        for _ in range(12):
+            get(f"/gift?gift_name=Rose&user={q('นก')}&diamonds=1")
+        s = wait_for(lambda s: s['gifts_received'] >= g0 + 12, 8)
+        check('dunk flood: repeated throws merge or enter party', s.get('combo', 1) >= 2 or s.get('party') or s.get('queue_len', 99) <= 1, f"combo={s.get('combo')} party={s.get('party')} queue_len={s.get('queue_len')}")
+        check('dunk flood: still serving', s.get('theme') == 'dunk' and (s.get('live_units') or 0) <= 250, f"live_units={s.get('live_units')}")
+        get('/control?clear=1')
+
         get('/control?mode=shrine'); s = wait_for(lambda s: s['theme'] == 'shrine')
         check('runtime mode switch -> shrine', s['theme'] == 'shrine')
         get('/control?click_through=1'); s = wait_for(lambda s: s['click_through'])

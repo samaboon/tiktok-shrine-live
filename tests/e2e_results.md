@@ -1,6 +1,6 @@
-# E2E results (2026-11-13 00:43 +07)
+# E2E results (2026-11-13 01:47 +07)
 
-68/68 passed
+87/87 passed
 
 | # | test | result | detail |
 |---|---|---|---|
@@ -29,7 +29,7 @@
 | 23 | F8 toggles click-through | PASS |  |
 | 24 | F9 cycles background | PASS | transparent -> green |
 | 25 | F2 switches mode | PASS | shrine -> krathong |
-| 26 | F2 cycles all 3 modes (shrine -> krathong -> cat) | PASS | shrine -> krathong -> cat |
+| 26 | F2 cycles all 5 modes (shrine -> krathong -> cat -> dance -> dunk) | PASS | shrine -> krathong -> cat -> dance -> dunk |
 | 27 | F1 opens/closes settings | PASS |  |
 | 28 | GET /event?action=pray | PASS |  |
 | 29 | GET /gift TikTok -> siamsi (gift mapping) | PASS | {'action': 'Siamsi', 'tier': 1, 'user': 'nana'} |
@@ -44,31 +44,50 @@
 | 38 | 3 senders: line is single-file, no overlap (>=100 px apart, on screen) | PASS | x=[430.0, 285.0] |
 | 39 | emoji stripped from name label (no tofu) | PASS |  |
 | 40 | shrine result card matches action (pray -> lucky numbers, siamsi -> fortune) | PASS | Pray -> numbers |
-| 41 | 3 senders: line advances (2nd sender steps up, 3rd moves forward) | PASS | line=[{'user': 'ผู้ส่งC', 'x': 413.0}] |
+| 41 | 3 senders: line advances (2nd sender steps up, 3rd moves forward) | PASS | line=[{'user': 'ผู้ส่งC', 'x': 383.0}] |
 | 42 | 3 senders: each gets their own turn in order | PASS |  |
 | 43 | layout toggle full/top (window resizes) | PASS | [540.0, 960.0] vs [540.0, 480.0] |
 | 44 | background mode green | PASS |  |
 | 45 | background mode scene | PASS |  |
 | 46 | background mode transparent | PASS |  |
-| 47 | transparent idle: ground props hidden | PASS | props_alpha=0.04313502088189125 |
+| 47 | transparent idle: ground props hidden | PASS | props_alpha=0.0 |
 | 48 | transparent show: props fade in | PASS | props_alpha=1.0 |
 | 49 | runtime mode switch -> krathong | PASS |  |
 | 50 | krathong: krathong is released and keeps floating | PASS | floating=1 |
 | 51 | runtime mode switch -> cat (ให้อาหารแมว) | PASS |  |
-| 52 | cat: 3 senders -> front cat + 2 cats visible in line | PASS | current=แมวA line=[{'user': 'แมวB', 'x': -26.0}, {'user': 'แมวC', 'x': -26.0}] |
+| 52 | cat: 3 senders -> front cat + 2 cats visible in line | PASS | current=แมวA line=[{'user': 'แมวB', 'x': -46.0}, {'user': 'แมวC', 'x': -46.0}] |
 | 53 | cat: walk -> pour -> eat -> card phases | PASS | ['card', 'eat', 'leave', 'pour', 'walk'] |
 | 54 | cat: result is thank-you card only (no lucky numbers) | PASS | {'thanks'} |
-| 55 | cat: line advances to next sender | PASS | line=[{'user': 'แมวC', 'x': 406.0}] |
-| 56 | runtime mode switch -> shrine | PASS |  |
-| 57 | click-through on/off via /control | PASS |  |
-| 58 | stop: gifts ignored while stopped | PASS |  |
-| 59 | start: gifts accepted again | PASS |  |
-| 60 | idle=hidden: scene fades fully transparent when idle | PASS | alpha=0.00 |
-| 61 | idle=hidden: gift fades the scene back in and plays | PASS |  |
-| 62 | idle=ambient: subtle motion keeps running | PASS |  |
-| 63 | idle=still: back to frozen still picture | PASS |  |
-| 64 | save writes config.toml | PASS |  |
-| 65 | reload picks up edited config.toml | PASS |  |
-| 66 | saved config keeps Thai text (UTF-8) | PASS |  |
-| 67 | Ctrl+Q quits | PASS |  |
-| 68 | no panic in log | PASS |  |
+| 55 | cat: line advances to next sender | PASS | line=[{'user': 'แมวC', 'x': 432.0}] |
+| 56 | runtime mode switch -> dance (โหมดเต้น) | PASS |  |
+| 57 | dance: 3 senders -> lead + 2 on the floor | PASS | current=เต้นA line=[{'user': 'เต้นB', 'x': -80.0}, {'user': 'เต้นC', 'x': -80.0}] |
+| 58 | dance: walk then dance phases | PASS | ['dance', 'leave', 'walk'] |
+| 59 | dance: result is challenge card only (no lucky numbers) | PASS | {'challenge'} |
+| 60 | dance: line advances to next sender | PASS | line=[{'user': 'เต้นC', 'x': -80.0}] |
+| 61 | runtime mode switch -> dunk (ปาตกน้ำ) | PASS |  |
+| 62 | dunk: 3 senders -> thrower + 2 waiting | PASS | current=ปาA line=[{'user': 'ปาB', 'x': -80.0}, {'user': 'ปาC', 'x': -80.0}] |
+| 63 | dunk: t5 walks and throws | PASS | ['drop', 'throw', 'walk'] |
+| 64 | dunk: t5 instant dunk credits the sender | PASS | dunk_by=สมศรี cards={'splash', 'throw'} phases=['drop', 'throw', 'walk'] |
+| 65 | dunk: result is throw/splash card only (no lucky numbers) | PASS | {'splash', 'throw'} |
+| 66 | dance flood: 30 gifts from one sender accepted | PASS | gifts=75 g0=45 |
+| 67 | dance flood: same sender merged (combo or single live card) | PASS | combo=30 queue_len=0 party=True |
+| 68 | dance flood: app still serving after 50 senders / 10s | PASS | dance |
+| 69 | dance flood: live records stay bounded | PASS | live_units=104 queue_len=50 waiting_extra=43 |
+| 70 | dance flood: not one-queue-entry-per-gift | PASS | queue_len=50 line=7 party=True combo=30 gifts=125 |
+| 71 | dance flood: party mode or overflow badge engaged | PASS | party=True waiting_extra=43 combo=30 |
+| 72 | dance flood: queue drains after the burst | PASS | idle=True party=False live_units=5 waiting_extra=0 current=None |
+| 73 | dunk flood: repeated throws merge or enter party | PASS | combo=12 party=True queue_len=0 |
+| 74 | dunk flood: still serving | PASS | live_units=14 |
+| 75 | runtime mode switch -> shrine | PASS |  |
+| 76 | click-through on/off via /control | PASS |  |
+| 77 | stop: gifts ignored while stopped | PASS |  |
+| 78 | start: gifts accepted again | PASS |  |
+| 79 | idle=hidden: scene fades fully transparent when idle | PASS | alpha=0.00 |
+| 80 | idle=hidden: gift fades the scene back in and plays | PASS |  |
+| 81 | idle=ambient: subtle motion keeps running | PASS |  |
+| 82 | idle=still: back to frozen still picture | PASS |  |
+| 83 | save writes config.toml | PASS |  |
+| 84 | reload picks up edited config.toml | PASS |  |
+| 85 | saved config keeps Thai text (UTF-8) | PASS |  |
+| 86 | Ctrl+Q quits | PASS |  |
+| 87 | no panic in log | PASS |  |

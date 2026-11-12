@@ -559,6 +559,7 @@ impl Default for Pose {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct Look {
     pub tier: usize,
     pub shirt: Color32,
@@ -729,12 +730,20 @@ pub fn draw_character(cx: &Cx, sprites: &Sprites, x: f32, pose: &Pose, look: &Lo
         let r = if tier >= 4 { 190.0 } else { 130.0 };
         cx.glow(body_c.0, body_c.1 - 20.0 * k, r * k, GOLD, 0.28 + 0.18 * pulse);
         if tier >= 4 && cx.soft {
+            let o = (body_c.0, body_c.1 - 20.0 * k);
+            let hdx = rig.head.0 - o.0;
+            let hdy = rig.head.1 - o.1;
+            let hdist = (hdx * hdx + hdy * hdy).sqrt().max(1.0);
             for i in 0..12 {
                 let ang = i as f32 / 12.0 * TAU + t * 0.6;
                 let (s, c) = ang.sin_cos();
+                // skip rays that would run through the face
+                if (hdx * c + hdy * s) / hdist > 0.55 {
+                    continue;
+                }
+                let inner = 58.0 * k;
                 let len = (180.0 + 26.0 * (t * 3.0 + i as f32).sin()) * k;
-                let o = (body_c.0, body_c.1 - 20.0 * k);
-                cx.poly(&[o, (o.0 + c * len - s * 12.0, o.1 + s * len + c * 12.0), (o.0 + c * len + s * 12.0, o.1 + s * len - c * 12.0)], rgba(255, 232, 150, 0.14));
+                cx.poly(&[(o.0 + c * inner, o.1 + s * inner), (o.0 + c * len - s * 12.0, o.1 + s * len + c * 12.0), (o.0 + c * len + s * 12.0, o.1 + s * len - c * 12.0)], rgba(255, 232, 150, 0.12));
             }
         }
     }

@@ -10,6 +10,8 @@ MODES = {
     'krathong': ('--theme', 'krathong', '--demo', 'siamsi:4:เจ้าสัวเฮง', '--demo', 'pray:2:สมชาย', '--demo', 'pray:1:Nok', '--seed', '95', '--shot-at', '10.0'),
     'cat':      ('--theme', 'cat', '--demo', 'pray:3:มะลิ', '--demo', 'pray:2:สมชาย', '--demo', 'pray:1:Nok', '--seed', '42', '--shot-at', '7.4'),
     'idle':     ('--shot-at', '3'),
+    'dance':    ('--theme', 'dance', '--config', '/tmp/ddshot/dance_floor.toml', '--demo', 'pray:3:มะลิ', '--demo', 'pray:2:สมชาย', '--demo', 'pray:1:Nok', '--seed', '42', '--shot-at', '3.7'),
+    'dunk':     ('--theme', 'dunk', '--config', '/tmp/ddshot/dunk.toml', '--demo', 'pray:5:จักรพรรดิเพชร', '--demo', 'pray:2:สมชาย', '--demo', 'pray:1:Nok', '--seed', '55', '--shot-at', '5.2'),
 }
 extra = sys.argv[1:]  # e.g. --props off
 # Thai captions need the embedded Thai font (NotoSans-Bold has no Thai glyphs -> tofu)
