@@ -7,30 +7,34 @@ W, H = 1080, 1920
 F = 'assets/fonts/NotoSans-Bold.ttf'
 
 def streamer_bg():
+    """Mock streamer frame: room + a person whose face sits in the LOWER half (y > 960)."""
     bg = Image.new('RGB', (W, H))
     d = ImageDraw.Draw(bg)
     for y in range(H):  # cozy room gradient
         t = y / H
         d.line([(0, y), (W, y)], fill=(int(60 + 80 * t), int(50 + 40 * t), int(90 - 30 * t)))
-    # shelves / window light
-    d.rectangle([80, 300, 420, 760], fill=(110, 130, 170))
+    d.rectangle([80, 300, 420, 760], fill=(110, 130, 170))   # window
     d.rectangle([95, 315, 405, 745], fill=(170, 200, 235))
-    d.rectangle([640, 520, 1000, 540], fill=(90, 60, 40))
+    d.rectangle([640, 620, 1000, 640], fill=(90, 60, 40))    # shelf
     for i, c in enumerate([(220, 90, 90), (90, 160, 220), (240, 200, 90), (120, 200, 120)]):
-        d.rectangle([660 + i * 80, 440, 720 + i * 80, 520], fill=c)
-    # streamer silhouette
+        d.rectangle([660 + i * 80, 540, 720 + i * 80, 620], fill=c)
     p = Image.new('RGBA', (W, H), (0, 0, 0, 0))
     pd = ImageDraw.Draw(p)
-    pd.ellipse([370, 880, 710, 1260], fill=(240, 200, 170, 255))
-    pd.ellipse([350, 830, 730, 1080], fill=(40, 30, 30, 255))
-    pd.ellipse([385, 930, 695, 1250], fill=(240, 200, 170, 255))
-    pd.rounded_rectangle([180, 1240, 900, 1920], radius=200, fill=(230, 80, 110, 255))
-    pd.ellipse([460, 1060, 490, 1090], fill=(40, 30, 30, 255))
-    pd.ellipse([590, 1060, 620, 1090], fill=(40, 30, 30, 255))
-    pd.arc([480, 1110, 600, 1180], 20, 160, fill=(150, 60, 60, 255), width=8)
+    Y = 140  # whole person shifted down so the face is fully below the overlay band
+    pd.rounded_rectangle([180, 1260 + Y, 900, 1920 + Y], radius=200, fill=(230, 80, 110, 255))  # body
+    pd.rectangle([490, 1230 + Y, 590, 1300 + Y], fill=(225, 185, 155, 255))                    # neck
+    pd.ellipse([350, 850 + Y, 730, 1100 + Y], fill=(40, 30, 30, 255))                           # hair
+    pd.ellipse([385, 930 + Y, 695, 1250 + Y], fill=(240, 200, 170, 255))                        # face
+    pd.pieslice([370, 860 + Y, 710, 1060 + Y], 180, 360, fill=(40, 30, 30, 255))               # fringe
+    for ex in (455, 585):
+        pd.ellipse([ex, 1070 + Y, ex + 40, 1110 + Y], fill=(255, 255, 255, 255))
+        pd.ellipse([ex + 9, 1076 + Y, ex + 33, 1104 + Y], fill=(40, 30, 30, 255))
+        pd.line([(ex - 4, 1052 + Y), (ex + 44, 1046 + Y)], fill=(40, 30, 30, 255), width=7)
+    pd.ellipse([420, 1140 + Y, 470, 1170 + Y], fill=(255, 150, 150, 120))
+    pd.ellipse([610, 1140 + Y, 660, 1170 + Y], fill=(255, 150, 150, 120))
+    pd.arc([490, 1120 + Y, 590, 1190 + Y], 20, 160, fill=(170, 60, 70, 255), width=8)
     bg.paste(p, (0, 0), p)
-    bg = bg.filter(ImageFilter.GaussianBlur(1.2))
-    return bg
+    return bg.filter(ImageFilter.GaussianBlur(1.0))
 
 def tiktok_ui(img):
     d = ImageDraw.Draw(img, 'RGBA')
@@ -77,9 +81,29 @@ def composite(raw, out, green=False, full=False):
     img.convert('RGB').resize((540, 960), Image.LANCZOS).save(out)
     print('saved', out)
 
-R = 'screenshots/raw/'
-composite(R + 'pray_t5_4_fireworks.png', 'screenshots/live_pray_t5.png')
-composite(R + 'pray_t1_3_number.png', 'screenshots/live_pray_t1.png')
-composite(R + 'siamsi_t3_3_fortune.png', 'screenshots/live_siamsi_t3.png')
-composite(R + 'mode_green_t5.png', 'screenshots/live_green_keyed_t5.png', green=True)
-composite(R + 'layout_full_t5.png', 'screenshots/live_fullscreen_t5.png', full=True)
+import subprocess, tempfile
+BIN = os.environ.get('BIN', './target/release/tiktok-shrine-live')
+R = tempfile.mkdtemp(prefix='live_raw_') + '/'
+
+def render(name, *args, opaque=False):
+    """Render a TRUE-alpha RGBA frame (no checkerboard) with the app's headless shot mode."""
+    out = R + name + '.png'
+    subprocess.run([BIN, '--no-status', '--out', out, *args], check=True, timeout=120,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    im = Image.open(out)
+    assert opaque or (im.mode == 'RGBA' and im.getextrema()[3][0] == 0), f'{name}: no real transparency'
+    return out
+
+D5 = 'pray:5:จักรพรรดิเพชร'
+jobs = [
+    ('live_pray_t5', ('--demo', D5, '--seed', '55', '--shot-at', '10.2'), {}),
+    ('live_pray_t1', ('--demo', 'pray:1:มะลิ', '--seed', '11', '--shot-at', '9.2'), {}),
+    ('live_siamsi_t3', ('--demo', 'siamsi:3:เศรษฐีต้น', '--seed', '39', '--shot-at', '11.4'), {}),
+    ('live_krathong_t4', ('--theme', 'krathong', '--demo', 'pray:4:เจ้าสัวเฮง', '--seed', '68', '--shot-at', '7.3'), {}),
+    ('live_krathong_t5_bless', ('--theme', 'krathong', '--demo', 'siamsi:5:จักรพรรดิเพชร', '--seed', '95', '--shot-at', '10.0'), {}),
+    ('live_idle_still', ('--shot-at', '3'), {}),
+    ('live_fullscreen_t5', ('--demo', D5, '--seed', '55', '--shot-at', '10.2', '--layout', 'full'), {'full': True}),
+    ('live_green_keyed_t5', ('--demo', D5, '--seed', '55', '--shot-at', '10.2', '--bg', 'green'), {'green': True}),
+]
+for name, args, kw in jobs:
+    composite(render(name, *args, opaque=kw.get('green', False)), f'screenshots/{name}.png', **kw)
