@@ -47,23 +47,44 @@ pub fn floor_y(vh: f32) -> f32 {
 pub fn stand_x() -> f32 {
     BOWL_X - STAND_OFF
 }
-/// Front cat sits further left at high tiers so the feast stays visible.
-pub fn front_stand(tier: usize) -> f32 {
-    if tier >= 4 {
-        BOWL_X - 155.0
-    } else if tier >= 3 {
-        BOWL_X - 120.0
+/// Body scale of the front/hero cat. Tier 4 is 1.5× tier 1, tier 5 is 2×.
+pub fn hero_body_scale(tier: usize) -> f32 {
+    0.88 * [1.0, 1.12, 1.25, 1.50, 2.00][tier.min(4)]
+}
+/// Waiting/queue cats stay compact so the line stays readable.
+pub fn queue_body_scale(tier: usize) -> f32 {
+    [0.88, 0.92, 0.96, 1.00, 1.04][tier.min(4)]
+}
+/// Throne, treat tower, and attendants scale with the hero.
+pub fn ceremony_scale(tier: usize) -> f32 {
+    [1.0, 1.05, 1.15, 1.50, 2.00][tier.min(4)]
+}
+pub fn attendant_scale(tier: usize) -> f32 {
+    [0.85, 0.92, 1.08, 1.38, 1.58][tier.min(4)]
+}
+pub fn look_drawn(s: &CatShow) -> CatLook {
+    let mut look = s.look.clone();
+    look.scale = if s.front {
+        hero_body_scale(s.tier)
     } else {
-        stand_x()
+        queue_body_scale(s.tier)
+    };
+    look
+}
+
+/// Front cat is centered at high tiers so the hero + throne + tower dominate the frame.
+pub fn front_stand(tier: usize) -> f32 {
+    match tier.min(4) {
+        4 => 450.0,
+        3 => 500.0,
+        _ => stand_x(),
     }
 }
 pub fn treat_x(tier: usize) -> f32 {
-    if tier >= 4 {
-        BOWL_X + 55.0
-    } else if tier >= 3 {
-        BOWL_X + 24.0
-    } else {
-        BOWL_X
+    match tier.min(4) {
+        4 => 790.0,
+        3 => 760.0,
+        _ => BOWL_X,
     }
 }
 pub fn slot_x(k: usize) -> f32 {
@@ -145,13 +166,17 @@ pub fn queue_targets(names: &[&str], tiers: &[usize], max_visible: usize) -> Vec
             xs[i] = OFF_X;
             continue;
         }
-        let prev_half = tag_half_width(
-            names[i - 1],
-            i - 1 == 0,
-            tiers.get(i - 1).copied().unwrap_or(0),
-        );
+        let prev_tier = tiers.get(i - 1).copied().unwrap_or(0);
+        let prev_half = tag_half_width(names[i - 1], i - 1 == 0, prev_tier);
         let this_half = tag_half_width(names[i], false, tiers.get(i).copied().unwrap_or(0));
-        let gap = (prev_half + this_half + 20.0).max(130.0);
+        // A high-tier front tag sits high above the throne, so don't reserve its
+        // full typographic width — leave room for a readable waiter line instead.
+        let (prev_for_gap, extra) = if i == 1 && prev_tier >= 3 {
+            (40.0, 70.0 + 40.0 * ceremony_scale(prev_tier).sqrt())
+        } else {
+            (prev_half, 0.0)
+        };
+        let gap = (prev_for_gap + this_half + 20.0 + extra).max(130.0);
         xs[i] = (xs[i - 1] - gap).max(70.0);
     }
     xs
@@ -574,17 +599,39 @@ impl Stage {
     }
 
     fn spawn_hearts(&mut self, i: usize, dt: f32) {
-        let tier = self.shows[i].tier;
-        let x = self.shows[i].x;
+        let cat = &self.shows[i];
+        let tier = cat.tier;
+        let x = cat.x;
+        let sc = if cat.front {
+            hero_body_scale(tier)
+        } else {
+            queue_body_scale(tier)
+        };
+        // Hearts and sparkles stay above or beside the face so the muzzle stays visible.
+        let face_r = 52.0 * sc;
+        let crown = if cat.look.crown { 36.0 * sc } else { 0.0 };
+        let head_top = self.floor - 28.0 * sc - 72.0 * sc - crown;
         let rate = 3.5 + tier as f32 * 3.2;
         if self.rng.f32() < rate * dt {
-            let g = self.floor;
+            let side = if self.rng.bool() { -1.0 } else { 1.0 };
+            let around = self.rng.bool();
+            let (px, py) = if around {
+                (
+                    x + side * (face_r + 16.0 + self.rng.f32() * 36.0),
+                    head_top + 8.0 + self.rng.f32() * 32.0 * sc,
+                )
+            } else {
+                (
+                    x + (self.rng.f32() - 0.5) * face_r * 1.35,
+                    head_top - 20.0 - self.rng.f32() * 48.0,
+                )
+            };
             self.particles.push(Fx {
                 kind: 0,
-                x: x + 20.0 + (self.rng.f32() - 0.5) * 40.0,
-                y: g - 70.0 - self.rng.f32() * 20.0,
-                vx: (self.rng.f32() - 0.5) * 18.0,
-                vy: -(40.0 + self.rng.f32() * 30.0),
+                x: px,
+                y: py,
+                vx: side * (16.0 + self.rng.f32() * 22.0),
+                vy: -(50.0 + self.rng.f32() * 36.0),
                 life: 1.4 + self.rng.f32() * 0.5,
                 max: 1.8,
                 size: 8.0 + tier as f32 * 2.0,
@@ -598,10 +645,11 @@ impl Stage {
             });
         }
         if tier >= 2 && self.rng.f32() < (2.0 + tier as f32) * dt {
+            let side = if self.rng.bool() { -1.0 } else { 1.0 };
             self.particles.push(Fx {
                 kind: 2,
-                x: x + (self.rng.f32() - 0.5) * 90.0,
-                y: self.floor - 80.0 - self.rng.f32() * 80.0,
+                x: x + side * (face_r + 12.0 + self.rng.f32() * 40.0),
+                y: head_top - 10.0 - self.rng.f32() * 50.0,
                 vx: 0.0,
                 vy: -12.0,
                 life: 0.7,
@@ -654,19 +702,27 @@ impl Stage {
         }
         if tier >= 3 {
             let bursts = if tier >= 4 { 12 } else { 6 };
+            let fw_cols = [
+                GOLD,
+                rgba(220, 24, 40, 1.0),
+                rgba(255, 140, 30, 1.0),
+                rgba(255, 60, 90, 1.0),
+                rgba(255, 210, 50, 1.0),
+                rgba(180, 20, 50, 1.0),
+            ];
             for k in 0..bursts {
                 let a = k as f32 / bursts as f32 * TAU + 0.4;
                 self.particles.push(Fx {
                     kind: 7,
                     x: 80.0 + k as f32 * (VW - 160.0) / (bursts as f32 - 1.0).max(1.0),
                     y: 50.0 + (k as f32 * 47.0) % 90.0,
-                    vx: a.cos() * 30.0,
-                    vy: 16.0,
+                    vx: a.cos() * 16.0,
+                    vy: 10.0,
                     life: 2.2 + self.rng.f32() * 0.4,
                     max: 2.6,
-                    size: 14.0 + tier as f32 * 2.0,
-                    rot: 0.0,
-                    col: GOLD,
+                    size: 18.0 + tier as f32 * 3.0,
+                    rot: a,
+                    col: fw_cols[k % fw_cols.len()],
                     _tier: tier,
                 });
             }
@@ -764,28 +820,43 @@ impl Stage {
         let fw = if tier >= 4 { 12.0 } else { 5.0 };
         if self.rng.f32() < fw * dt {
             let bx = 80.0 + self.rng.f32() * (VW - 160.0);
-            let by = 40.0 + self.rng.f32() * 160.0;
-            let sparks = if tier >= 4 { 18 } else { 10 };
+            let by = 36.0 + self.rng.f32() * 140.0;
             let cols = [
                 GOLD,
-                rgba(255, 240, 180, 1.0),
-                rgba(255, 160, 80, 1.0),
-                rgba(255, 220, 120, 1.0),
+                rgba(220, 24, 40, 1.0),
+                rgba(255, 140, 30, 1.0),
+                rgba(255, 50, 80, 1.0),
+                rgba(255, 210, 50, 1.0),
             ];
+            let col = cols[self.rng.usize(0..cols.len())];
+            self.particles.push(Fx {
+                kind: 7,
+                x: bx,
+                y: by,
+                vx: 0.0,
+                vy: 8.0,
+                life: 1.0 + self.rng.f32() * 0.4,
+                max: 1.4,
+                size: 18.0 + tier as f32 * 4.0,
+                rot: self.rng.f32() * TAU,
+                col,
+                _tier: tier,
+            });
+            let sparks = if tier >= 4 { 16 } else { 10 };
             for k in 0..sparks {
-                let a = k as f32 / sparks as f32 * TAU + self.rng.f32() * 0.3;
-                let sp = 50.0 + self.rng.f32() * 90.0;
+                let a = k as f32 / sparks as f32 * TAU + self.rng.f32() * 0.25;
+                let sp = 55.0 + self.rng.f32() * 90.0;
                 self.particles.push(Fx {
-                    kind: 7,
+                    kind: 2,
                     x: bx,
                     y: by,
                     vx: a.cos() * sp,
                     vy: a.sin() * sp,
-                    life: 0.7 + self.rng.f32() * 0.5,
-                    max: 1.2,
-                    size: 6.0 + self.rng.f32() * 6.0,
+                    life: 0.7 + self.rng.f32() * 0.45,
+                    max: 1.15,
+                    size: 5.0 + self.rng.f32() * 5.0,
                     rot: 0.0,
-                    col: cols[self.rng.usize(0..cols.len())],
+                    col: cols[k % cols.len()],
                     _tier: tier,
                 });
             }
@@ -915,15 +986,16 @@ impl Stage {
             if s.front && s.tier >= 4 {
                 draw_palanquin(cx, s.x, cx.ground(), s, reveal, alpha);
             }
-            draw_cat(cx, s.x, cx.ground(), &s.look, &pose, alpha);
-            let head_top = cat_head_top(s.x, cx.ground(), &s.look, &pose);
+            let look = look_drawn(s);
+            draw_cat(cx, s.x, cx.ground(), &look, &pose, alpha);
+            let head_top = cat_head_top(s.x, cx.ground(), &look, &pose);
             // palanquin lifts the royal cat; name tag already accounts for crown
-            draw_cat_name_tag(
-                cx,
-                s,
-                head_top - if s.front && s.tier >= 4 { 52.0 } else { 0.0 },
-                alpha,
-            );
+            let tag_lift = if s.front && s.tier >= 4 {
+                28.0 + 16.0 * ceremony_scale(s.tier).min(1.5)
+            } else {
+                0.0
+            };
+            draw_cat_name_tag(cx, s, head_top - tag_lift, alpha);
         }
         if let Some(s) = front {
             let reveal = reveal_dur(s.tier, reveal_base);
@@ -972,15 +1044,39 @@ impl Stage {
                 4 if behind => cx.circle(p.x, p.y, p.size, with_a(p.col, 0.35 * a)),
                 5 if !behind => draw_petal(cx, p.x, p.y, p.size, p.rot, with_a(p.col, a * 0.95)),
                 6 if !behind => draw_confetti_bit(cx, p.x, p.y, p.size, p.rot, with_a(p.col, a)),
-                7 if !behind => {
-                    sparkle(cx, p.x, p.y, p.size * (0.9 + 0.5 * a), with_a(p.col, a));
-                    cx.glow_add(p.x, p.y, p.size * 6.0, p.col, 0.4 * a);
-                    cx.circle(p.x, p.y, p.size * 0.35, with_a(Color32::WHITE, a));
-                }
+                7 if !behind => draw_firework_burst(cx, p.x, p.y, p.size, p.rot, p.col, a),
                 _ => {}
             }
         }
     }
+}
+
+/// Saturated gold / crimson / orange burst — no white bloom wash.
+fn draw_firework_burst(cx: &Cx, x: f32, y: f32, size: f32, rot: f32, col: Color32, a: f32) {
+    let rays = 12;
+    for i in 0..rays {
+        let ang = rot + i as f32 / rays as f32 * TAU;
+        let (s, c) = ang.sin_cos();
+        let len = size * (1.65 + 0.45 * (i as f32 * 1.7).sin());
+        let x2 = x + c * len;
+        let y2 = y + s * len;
+        cx.seg(
+            (x, y),
+            (x2, y2),
+            (2.2 + size * 0.05).min(4.4),
+            with_a(col, a),
+        );
+        cx.circle(x2, y2, size * 0.16, with_a(col, a * 0.95));
+        let tip = if i % 2 == 0 {
+            GOLD
+        } else {
+            rgba(220, 24, 40, 1.0)
+        };
+        cx.circle(x2, y2, size * 0.08, with_a(tip, a));
+    }
+    cx.glow(x, y, size * 2.4, col, 0.42 * a);
+    cx.circle(x, y, size * 0.36, with_a(col, a));
+    cx.circle(x, y, size * 0.16, with_a(GOLD, a));
 }
 
 fn food_color(t: Treat, r: f32) -> Color32 {
@@ -1053,7 +1149,8 @@ fn pose_of(s: &CatShow, reveal: f32, time: f32) -> CatPose {
                 blink,
                 sit: if royal_ride { 1.0 } else { 0.0 },
                 hop: if royal_ride {
-                    22.0 + (s.t * 3.2).sin() * 3.0
+                    let lift = 16.0 + 8.0 * ceremony_scale(s.tier).min(1.55);
+                    lift + (s.t * 3.2).sin() * 3.0
                 } else if s.tier >= 3 && ph == "walk" {
                     (s.t * 6.0).sin().max(0.0) * 6.0
                 } else {
@@ -2162,18 +2259,54 @@ fn card_frame(cx: &Cx, cxx: f32, top: f32, wdt: f32, hgt: f32, alpha: f32, tier:
                 3.0,
                 with_a(GOLD, alpha),
             );
-            for (dx, h) in [(-20.0, 14.0), (0.0, 22.0), (20.0, 14.0)] {
+            cx.rect(
+                cx0 - 48.0,
+                cy - 8.0,
+                cx0 + 48.0,
+                cy + 10.0,
+                3.0,
+                with_a(GOLD_D, alpha),
+            );
+            for (dx, h) in [
+                (-38.0, 16.0),
+                (-20.0, 24.0),
+                (0.0, 34.0),
+                (20.0, 24.0),
+                (38.0, 16.0),
+            ] {
                 cx.poly(
                     &[
-                        (cx0 + dx - 7.0, cy),
-                        (cx0 + dx + 7.0, cy),
+                        (cx0 + dx - 8.0, cy),
+                        (cx0 + dx + 8.0, cy),
                         (cx0 + dx, cy - h),
                     ],
                     with_a(GOLD, alpha),
                 );
             }
-            cx.circle(cx0, cy - 24.0, 5.0, with_a(rgba(255, 80, 110, 1.0), alpha));
-            cx.glow(cx0, cy - 8.0, 70.0, GOLD, 0.4 * alpha);
+            cx.circle(cx0, cy - 36.0, 6.0, with_a(rgba(255, 80, 110, 1.0), alpha));
+            cx.circle(cx0, cy - 36.0, 2.4, with_a(Color32::WHITE, alpha));
+            cx.glow(cx0, cy - 10.0, 90.0, GOLD, 0.5 * alpha);
+            // gold pillars at the sides
+            for side in [-1.0, 1.0] {
+                let px = cx0 + side * (wdt * 0.5 + 6.0);
+                cx.rect(
+                    px - 7.0,
+                    top + 24.0,
+                    px + 7.0,
+                    top + hgt - 24.0,
+                    3.0,
+                    with_a(GOLD, alpha),
+                );
+                cx.circle(px, top + 22.0, 9.0, with_a(GOLD, alpha));
+                cx.circle(px, top + 22.0, 4.0, with_a(rgba(255, 80, 110, 1.0), alpha));
+                cx.circle(px, top + hgt - 22.0, 9.0, with_a(GOLD, alpha));
+                cx.circle(
+                    px,
+                    top + hgt - 22.0,
+                    4.0,
+                    with_a(rgba(255, 80, 110, 1.0), alpha),
+                );
+            }
         }
     }
 }
@@ -2224,16 +2357,10 @@ fn draw_thanks_card(cx: &Cx, s: &CatShow, rt: f32, r: f32, thanks_title: &str) {
     let tier = s.tier;
     let fo = smooth((rt - (r - 0.45)) / 0.45);
     let alpha = smooth(rt / 0.25) * (1.0 - fo);
-    let hgt = 340.0;
-    let wdt = 660.0 + tier as f32 * 16.0;
+    let hgt = [340.0, 348.0, 360.0, 380.0, 400.0][tier.min(4)];
+    let wdt = [640.0, 690.0, 760.0, 840.0, 920.0][tier.min(4)];
     let cxx = 540.0;
-    let pad = if tier >= 4 {
-        44.0
-    } else if tier >= 3 {
-        30.0
-    } else {
-        20.0
-    };
+    let pad = [20.0, 24.0, 28.0, 36.0, 52.0][tier.min(4)];
     let settled = pad + tab_hang(tier);
     let enter = (1.0 - ease_out_back(rt / 0.55)) * (hgt + 50.0);
     let top = settled + enter - fo * 16.0;
@@ -2254,14 +2381,15 @@ fn draw_thanks_card(cx: &Cx, s: &CatShow, rt: f32, r: f32, thanks_title: &str) {
         );
     }
     let title = format!("ขอบคุณ {}", s.user);
+    let title_size = [40.0, 42.0, 44.0, 48.0, 52.0][tier.min(4)];
     if tier >= 4 {
-        cx.glow(cxx, top + 74.0, 220.0, GOLD, 0.45 * ca);
+        cx.glow(cxx, top + 80.0, 260.0, GOLD, 0.5 * ca);
         cx.text_o(
             cxx,
-            top + 74.0,
+            top + 80.0,
             Align2::CENTER_CENTER,
             &title,
-            44.0,
+            title_size,
             with_a(GOLD, ca),
             with_a(rgba(80, 30, 10, 0.9), ca),
             true,
@@ -2272,7 +2400,7 @@ fn draw_thanks_card(cx: &Cx, s: &CatShow, rt: f32, r: f32, thanks_title: &str) {
             top + 74.0,
             Align2::CENTER_CENTER,
             &title,
-            40.0,
+            title_size,
             with_a(rgba(150, 50, 50, 1.0), ca),
             with_a(Color32::WHITE, ca),
             true,
@@ -2283,14 +2411,14 @@ fn draw_thanks_card(cx: &Cx, s: &CatShow, rt: f32, r: f32, thanks_title: &str) {
     for i in 0..nhearts {
         let side = if i % 2 == 0 { -1.0 } else { 1.0 };
         let k = (i / 2) as f32;
-        let hx = cxx + side * (230.0 + k * 16.0);
-        let hy = top + 74.0 + (k - 0.3) * 6.0;
+        let hx = cxx + side * (wdt * 0.36 + k * 18.0);
+        let hy = top + if tier >= 4 { 80.0 } else { 74.0 } + (k - 0.3) * 6.0;
         let pulse = 0.85 + 0.15 * (cx.time * 3.0 + i as f32).sin();
         draw_heart(
             cx,
             hx,
             hy,
-            11.0 * pulse,
+            (11.0 + tier as f32 * 0.8) * pulse,
             with_a(rgba(255, 110, 150, 1.0), ca),
         );
     }
@@ -2521,9 +2649,16 @@ fn draw_ceremony_back(cx: &Cx, s: &CatShow, reveal: f32) {
     }
     if s.tier >= 4 && cx.soft {
         // warm gold light wash near the feast (keeps the streamer visible — no full-screen veil)
-        cx.glow(treat_x(s.tier), cx.ground() - 80.0, 260.0, GOLD, 0.22 * a);
+        let sc = ceremony_scale(s.tier);
+        cx.glow(
+            treat_x(s.tier),
+            cx.ground() - 80.0 * sc,
+            260.0 * sc,
+            GOLD,
+            0.22 * a,
+        );
         if s.tier >= 4 {
-            cx.glow(s.x, cx.ground() - 90.0, 200.0, GOLD, 0.18 * a);
+            cx.glow(s.x, cx.ground() - 90.0 * sc, 220.0 * sc, GOLD, 0.2 * a);
         }
     }
 }
@@ -2537,13 +2672,14 @@ fn draw_ceremony_mid(cx: &Cx, s: &CatShow, reveal: f32) {
     if s.tier < 3 {
         return;
     }
-    // attendants: stay to the RIGHT of the bowl so they never collide with the queue
+    // attendants flank the throne: one left of the hero, one right (before the treat tower)
     let g = cx.ground();
     let ph = s.phase(reveal);
     let bob = (cx.time * 3.0).sin() * 2.0;
     if s.tier >= 3 {
-        // two kittens
-        let (ax, bx) = (treat_x(s.tier) + 115.0, treat_x(s.tier) + 195.0);
+        let k = attendant_scale(s.tier);
+        let flank = 88.0 + 70.0 * ceremony_scale(s.tier).sqrt();
+        let (ax, bx) = (s.x - flank, s.x + flank);
         if s.tier >= 4 && ph == "walk" {
             // they walk with the palanquin as bearers (also drawn in palanquin)
         } else {
@@ -2551,21 +2687,23 @@ fn draw_ceremony_mid(cx: &Cx, s: &CatShow, reveal: f32) {
                 cx,
                 ax,
                 g,
-                -1.0,
+                1.0,
                 if s.tier >= 4 { "fan" } else { "sit" },
                 cx.time,
                 a,
                 rgba(240, 220, 190, 1.0),
+                k,
             );
             draw_attendant_kitten(
                 cx,
                 bx,
                 g,
-                1.0,
+                -1.0,
                 if s.tier >= 4 { "fan" } else { "bow" },
                 cx.time + 0.7,
                 a,
                 rgba(50, 44, 48, 1.0),
+                k,
             );
             let _ = bob;
         }
@@ -2637,6 +2775,15 @@ fn draw_screen_shine(cx: &Cx, s: &CatShow, _reveal: f32) {
 fn draw_palanquin(cx: &Cx, x: f32, g: f32, s: &CatShow, reveal: f32, alpha: f32) {
     let ph = s.phase(reveal);
     let carried = ph == "walk";
+    let sc = ceremony_scale(s.tier);
+    let wsc = sc.min(1.7);
+    // Width scales fully (capped so the feast still sits clear); canopy height is
+    // reduced during the thank-you card so they don't collide.
+    let hsc = if ph == "card" {
+        1.05
+    } else {
+        1.0 + (sc - 1.0) * 0.72
+    };
     let bob = if carried {
         (s.t * 3.2).sin() * 3.0
     } else {
@@ -2644,41 +2791,53 @@ fn draw_palanquin(cx: &Cx, x: f32, g: f32, s: &CatShow, reveal: f32, alpha: f32)
     };
     let base = g - if carried { 8.0 } else { 4.0 } - bob;
     // platform
-    cx.ellipse(x, g - 2.0, 78.0, 14.0, rgba(0, 0, 0, 0.28 * alpha));
+    cx.ellipse(
+        x,
+        g - 2.0,
+        78.0 * wsc,
+        14.0 * wsc,
+        rgba(0, 0, 0, 0.28 * alpha),
+    );
     cx.rect(
-        x - 70.0,
+        x - 70.0 * wsc,
         base - 18.0,
-        x + 70.0,
+        x + 70.0 * wsc,
         base + 6.0,
         8.0,
         with_a(GOLD_D, alpha),
     );
     cx.rect(
-        x - 66.0,
+        x - 66.0 * wsc,
         base - 16.0,
-        x + 66.0,
+        x + 66.0 * wsc,
         base + 2.0,
         6.0,
         with_a(GOLD, alpha),
     );
     // velvet cushion
-    cx.ellipse(x, base - 20.0, 48.0, 16.0, with_a(CRIMSON, alpha));
+    cx.ellipse(
+        x,
+        base - 20.0,
+        48.0 * wsc,
+        16.0 * wsc,
+        with_a(CRIMSON, alpha),
+    );
     cx.ellipse(
         x,
         base - 26.0,
-        40.0,
-        12.0,
+        40.0 * wsc,
+        12.0 * wsc,
         with_a(rgba(190, 30, 55, 1.0), alpha),
     );
     cx.ellipse(
-        x + 8.0,
+        x + 8.0 * wsc,
         base - 28.0,
-        16.0,
-        6.0,
+        16.0 * wsc,
+        6.0 * wsc,
         with_a(rgba(255, 180, 190, 0.45), alpha),
     );
     // corner tassels
-    for dx in [-62.0, 62.0] {
+    for dx in [-62.0 * wsc, 62.0 * wsc] {
         cx.seg(
             (x + dx, base - 8.0),
             (x + dx, base + 10.0),
@@ -2688,88 +2847,111 @@ fn draw_palanquin(cx: &Cx, x: f32, g: f32, s: &CatShow, reveal: f32, alpha: f32)
         cx.circle(
             x + dx,
             base + 12.0,
-            4.0,
+            4.0 * sc.min(1.4),
             with_a(rgba(255, 80, 110, 1.0), alpha),
         );
     }
     // canopy posts + roof when carried or during pour/eat (throne)
-    let posts = [(-58.0, -8.0), (58.0, -8.0)];
-    for (dx, _) in posts {
+    let posts = [-58.0 * wsc, 58.0 * wsc];
+    let post_h = 150.0 * hsc;
+    for dx in posts {
         cx.rect(
-            x + dx - 4.0,
-            base - 150.0,
-            x + dx + 4.0,
+            x + dx - 4.0 * sc.min(1.4),
+            base - post_h,
+            x + dx + 4.0 * sc.min(1.4),
             base - 12.0,
             1.5,
             with_a(GOLD, alpha),
         );
-        cx.circle(x + dx, base - 152.0, 7.0, with_a(GOLD, alpha));
         cx.circle(
             x + dx,
-            base - 152.0,
-            3.0,
+            base - post_h - 2.0,
+            7.0 * sc.min(1.35),
+            with_a(GOLD, alpha),
+        );
+        cx.circle(
+            x + dx,
+            base - post_h - 2.0,
+            3.0 * sc.min(1.35),
             with_a(rgba(255, 80, 110, 1.0), alpha),
         );
     }
     // tall ceremonial roof / backboard that frames the crown
+    let roof_y = 142.0 * hsc;
+    let tip_y = 198.0 * hsc;
     cx.poly(
         &[
-            (x - 80.0, base - 142.0),
-            (x + 80.0, base - 142.0),
-            (x + 62.0, base - 176.0),
-            (x, base - 198.0),
-            (x - 62.0, base - 176.0),
+            (x - 80.0 * wsc, base - roof_y),
+            (x + 80.0 * wsc, base - roof_y),
+            (x + 62.0 * wsc, base - 176.0 * hsc),
+            (x, base - tip_y),
+            (x - 62.0 * wsc, base - 176.0 * hsc),
         ],
         with_a(CRIMSON, alpha),
     );
     cx.poly(
         &[
-            (x - 72.0, base - 146.0),
-            (x + 72.0, base - 146.0),
-            (x, base - 186.0),
+            (x - 72.0 * wsc, base - (roof_y + 4.0)),
+            (x + 72.0 * wsc, base - (roof_y + 4.0)),
+            (x, base - 186.0 * hsc),
         ],
         with_a(GOLD, 0.95 * alpha),
     );
-    cx.circle(x, base - 200.0, 8.0, with_a(GOLD, alpha));
-    cx.circle(x, base - 200.0, 3.4, with_a(rgba(255, 80, 110, 1.0), alpha));
-    cx.glow(x, base - 170.0, 80.0, GOLD, 0.3 * alpha);
+    cx.circle(
+        x,
+        base - tip_y - 2.0,
+        8.0 * sc.min(1.35),
+        with_a(GOLD, alpha),
+    );
+    cx.circle(
+        x,
+        base - tip_y - 2.0,
+        3.4 * sc.min(1.35),
+        with_a(rgba(255, 80, 110, 1.0), alpha),
+    );
+    cx.glow(x, base - 170.0 * hsc, 80.0 * sc, GOLD, 0.3 * alpha);
     // carrying poles + bearers while walking
     if carried {
+        let pole = 130.0 * wsc;
         cx.rect(
-            x - 130.0,
+            x - pole,
             base - 22.0,
-            x + 130.0,
+            x + pole,
             base - 16.0,
             2.0,
             with_a(GOLD_D, alpha),
         );
         cx.rect(
-            x - 128.0,
+            x - pole + 2.0,
             base - 21.0,
-            x + 128.0,
+            x + pole - 2.0,
             base - 17.0,
             1.5,
             with_a(GOLD, alpha),
         );
+        let k = attendant_scale(s.tier);
+        let bear = 108.0 * wsc.sqrt();
         draw_attendant_kitten(
             cx,
-            x - 108.0,
+            x - bear,
             g,
             1.0,
             "carry",
             cx.time,
             alpha,
             rgba(240, 220, 190, 1.0),
+            k,
         );
         draw_attendant_kitten(
             cx,
-            x + 112.0,
+            x + bear,
             g,
             -1.0,
             "carry",
             cx.time + 0.4,
             alpha,
             rgba(50, 44, 48, 1.0),
+            k,
         );
     }
 }
@@ -2806,8 +2988,8 @@ fn draw_attendant_kitten(
     time: f32,
     alpha: f32,
     fur: Color32,
+    k: f32,
 ) {
-    let k = 0.92;
     let dark = shade(fur, 0.7);
     let light = shade(fur, 1.25);
     let bob = if job == "carry" {
@@ -2954,30 +3136,61 @@ fn draw_gold_bowl_on_cushion(
     time: f32,
 ) {
     let g = cx.ground();
-    // velvet cushion
-    cx.ellipse(x, g - 2.0, 130.0, 28.0, with_a(CRIMSON, 0.98));
-    cx.ellipse(x, g - 12.0, 112.0, 22.0, rgba(180, 24, 48, 1.0));
-    cx.ellipse(x + 18.0, g - 16.0, 36.0, 10.0, rgba(255, 180, 190, 0.4));
+    let sc = ceremony_scale(3);
+    let csc = 1.28; // cushion slightly tighter than the 1.5× bowl so it clears the cat
+                    // velvet cushion
+    cx.ellipse(x, g - 2.0, 130.0 * csc, 28.0 * csc, with_a(CRIMSON, 0.98));
+    cx.ellipse(
+        x,
+        g - 12.0 * sc,
+        112.0 * csc,
+        22.0 * csc,
+        rgba(180, 24, 48, 1.0),
+    );
+    cx.ellipse(
+        x + 18.0 * sc,
+        g - 16.0 * sc,
+        36.0 * sc,
+        10.0 * sc,
+        rgba(255, 180, 190, 0.4),
+    );
     // tassels
-    for dx in [-70.0, 70.0] {
-        cx.circle(x + dx, g - 4.0, 7.0, GOLD);
+    for dx in [-70.0 * sc, 70.0 * sc] {
+        cx.circle(x + dx, g - 4.0, 7.0 * sc.min(1.35), GOLD);
         cx.seg((x + dx, g - 2.0), (x + dx, g + 10.0), 2.0, GOLD);
     }
-    let rim_y = g - 44.0;
-    cx.glow(x, rim_y, 90.0, GOLD, 0.35);
-    cx.ellipse(x, g - 16.0, 62.0, 16.0, GOLD_D);
-    cx.ellipse(x, rim_y + 14.0, 68.0, 20.0, GOLD);
-    cx.ellipse(x, rim_y, 74.0, 18.0, Color32::from_rgb(255, 230, 140));
-    cx.ring(x, rim_y, 74.0, 5.5, GOLD_D);
-    cx.ring(x, rim_y, 66.0, 2.8, GOLD);
+    let rim_y = g - 44.0 * sc;
+    cx.glow(x, rim_y, 90.0 * sc, GOLD, 0.35);
+    cx.ellipse(x, g - 16.0 * sc, 62.0 * sc, 16.0 * sc, GOLD_D);
+    cx.ellipse(x, rim_y + 14.0 * sc, 68.0 * sc, 20.0 * sc, GOLD);
+    cx.ellipse(
+        x,
+        rim_y,
+        74.0 * sc,
+        18.0 * sc,
+        Color32::from_rgb(255, 230, 140),
+    );
+    cx.ring(x, rim_y, 74.0 * sc, 5.5 * sc.min(1.3), GOLD_D);
+    cx.ring(x, rim_y, 66.0 * sc, 2.8, GOLD);
     // gem on rim
-    for dx in [-28.0, 0.0, 28.0] {
-        cx.circle(x + dx, rim_y, 5.0, rgba(255, 80, 120, 1.0));
-        cx.circle(x + dx - 1.2, rim_y - 1.2, 1.6, Color32::WHITE);
+    for dx in [-28.0 * sc, 0.0, 28.0 * sc] {
+        cx.circle(x + dx, rim_y, 5.0 * sc.min(1.35), rgba(255, 80, 120, 1.0));
+        cx.circle(
+            x + dx - 1.2,
+            rim_y - 1.2,
+            1.6 * sc.min(1.35),
+            Color32::WHITE,
+        );
     }
     let sh = 0.5 + 0.3 * (time * 3.2).sin();
-    cx.ellipse(x - 18.0, rim_y + 5.0, 12.0, 6.0, rgba(255, 255, 220, sh));
-    fill_bowl(cx, x, rim_y, food, treat, 1.2);
+    cx.ellipse(
+        x - 18.0 * sc,
+        rim_y + 5.0 * sc,
+        12.0 * sc,
+        6.0 * sc,
+        rgba(255, 255, 220, sh),
+    );
+    fill_bowl(cx, x, rim_y, food, treat, 1.2 * sc);
     pour_stream(cx, x, rim_y, pour);
 }
 
@@ -3029,30 +3242,61 @@ fn draw_feast_tower(
     time: f32,
 ) {
     let g = cx.ground();
+    let sc = ceremony_scale(4);
     let pulse = 0.55 + 0.45 * (time * 2.2).sin().abs();
-    cx.glow(x, g - 80.0, 160.0, GOLD, 0.4 * pulse);
+    cx.glow(x, g - 80.0 * sc, 160.0 * sc, GOLD, 0.4 * pulse);
     // pedestal
-    cx.ellipse(x, g - 2.0, 100.0, 20.0, with_a(CRIMSON, 0.95));
-    cx.ellipse(x, g - 8.0, 86.0, 16.0, rgba(170, 16, 40, 1.0));
-    cx.rect(x - 36.0, g - 48.0, x + 36.0, g - 8.0, 6.0, GOLD_D);
-    cx.rect(x - 32.0, g - 46.0, x + 32.0, g - 10.0, 5.0, GOLD);
+    cx.ellipse(x, g - 2.0, 100.0 * sc, 20.0 * sc, with_a(CRIMSON, 0.95));
+    cx.ellipse(
+        x,
+        g - 8.0 * sc,
+        86.0 * sc,
+        16.0 * sc,
+        rgba(170, 16, 40, 1.0),
+    );
+    cx.rect(
+        x - 36.0 * sc,
+        g - 48.0 * sc,
+        x + 36.0 * sc,
+        g - 8.0 * sc,
+        6.0,
+        GOLD_D,
+    );
+    cx.rect(
+        x - 32.0 * sc,
+        g - 46.0 * sc,
+        x + 32.0 * sc,
+        g - 10.0 * sc,
+        5.0,
+        GOLD,
+    );
     // three gold plates, stacked
-    let levels = [(0.0, 52.0, 70.0), (-36.0, 86.0, 50.0), (0.0, 118.0, 36.0)];
+    let levels = [
+        (0.0, 52.0 * sc, 70.0 * sc),
+        (-36.0 * sc, 86.0 * sc, 50.0 * sc),
+        (0.0, 118.0 * sc, 36.0 * sc),
+    ];
     for (i, (dx, h, r)) in levels.iter().enumerate() {
-        let px = x + dx;
+        let px = x + *dx;
         let py = g - *h;
-        cx.ellipse(px, py + 8.0, *r, 12.0, GOLD_D);
-        cx.ellipse(px, py, *r + 4.0, 11.0, GOLD);
-        cx.ellipse(px, py, *r - 6.0, 7.0, Color32::from_rgb(255, 236, 170));
-        cx.ring(px, py, *r + 4.0, 3.0, GOLD_D);
+        cx.ellipse(px, py + 8.0 * sc, *r, 12.0 * sc, GOLD_D);
+        cx.ellipse(px, py, *r + 4.0 * sc, 11.0 * sc, GOLD);
+        cx.ellipse(
+            px,
+            py,
+            *r - 6.0 * sc,
+            7.0 * sc,
+            Color32::from_rgb(255, 236, 170),
+        );
+        cx.ring(px, py, *r + 4.0 * sc, 3.0 * sc.min(1.35), GOLD_D);
         // food on each plate
         if food > 0.08 {
             match i {
                 0 => {
                     // giant golden fish
-                    draw_royal_fish(cx, px - 4.0, py - 16.0, 1.85, -0.12, time);
-                    draw_mini_fish(cx, px + 28.0, py - 2.0, 0.7, 0.4);
-                    draw_mini_fish(cx, px - 30.0, py - 1.0, 0.6, -0.3);
+                    draw_royal_fish(cx, px - 4.0 * sc, py - 16.0 * sc, 1.85 * sc, -0.12, time);
+                    draw_mini_fish(cx, px + 28.0 * sc, py - 2.0 * sc, 0.7 * sc, 0.4);
+                    draw_mini_fish(cx, px - 30.0 * sc, py - 1.0 * sc, 0.6 * sc, -0.3);
                 }
                 1 => {
                     // sashimi + gold orbs
@@ -3061,15 +3305,21 @@ fn draw_feast_tower(
                         (0.0, -8.0, rgba(255, 160, 90, 1.0)),
                         (14.0, -4.0, rgba(255, 100, 110, 1.0)),
                     ] {
-                        cx.ellipse(px + ox, py + oy, 11.0, 5.5, c);
+                        cx.ellipse(px + ox * sc, py + oy * sc, 11.0 * sc, 5.5 * sc, c);
                     }
-                    cx.circle(px, py - 16.0, 6.0, GOLD);
+                    cx.circle(px, py - 16.0 * sc, 6.0 * sc, GOLD);
                 }
                 _ => {
-                    cx.ellipse(px, py - 8.0, 14.0, 8.0, rgba(255, 200, 80, 1.0));
-                    cx.circle(px, py - 16.0, 7.0, rgba(255, 80, 110, 1.0));
-                    cx.circle(px, py - 16.0, 3.0, Color32::WHITE);
-                    cx.glow(px, py - 16.0, 22.0, GOLD, 0.4);
+                    cx.ellipse(
+                        px,
+                        py - 8.0 * sc,
+                        14.0 * sc,
+                        8.0 * sc,
+                        rgba(255, 200, 80, 1.0),
+                    );
+                    cx.circle(px, py - 16.0 * sc, 7.0 * sc, rgba(255, 80, 110, 1.0));
+                    cx.circle(px, py - 16.0 * sc, 3.0 * sc, Color32::WHITE);
+                    cx.glow(px, py - 16.0 * sc, 22.0 * sc, GOLD, 0.4);
                 }
             }
         }
@@ -3078,17 +3328,17 @@ fn draw_feast_tower(
     for i in 0..4 {
         let u = ((time * 0.7 + i as f32 * 0.4) % 1.0).abs();
         cx.ellipse(
-            x - 16.0 + i as f32 * 10.0,
-            g - 140.0 - u * 30.0,
-            6.0 + u * 8.0,
-            10.0,
+            x - 16.0 * sc + i as f32 * 10.0 * sc,
+            g - 140.0 * sc - u * 30.0 * sc,
+            (6.0 + u * 8.0) * sc,
+            10.0 * sc,
             rgba(255, 240, 200, 0.28 * (1.0 - u)),
         );
     }
     let _ = treat;
     if let Some((_, u)) = pour {
-        pour_stream(cx, x, g - 52.0, pour);
-        cx.glow(x, g - 52.0 - 80.0, 70.0, GOLD, 0.3 * u);
+        pour_stream(cx, x, g - 52.0 * sc, pour);
+        cx.glow(x, g - 52.0 * sc - 80.0 * sc, 70.0 * sc, GOLD, 0.3 * u);
     }
 }
 
@@ -3309,5 +3559,16 @@ mod tests {
         assert!(t5.cape && t5.crown);
         // high tiers last long enough that a mid-eat still is well after the walk-in
         assert!(walk_max(4) + pour_dur(4) + eat_dur(4) * 0.4 > 4.0);
+        // hero cat is 1.5× / 2× tier 1; queued high-tier cats stay compact
+        assert!((hero_body_scale(3) / hero_body_scale(0) - 1.5).abs() < 0.01);
+        assert!((hero_body_scale(4) / hero_body_scale(0) - 2.0).abs() < 0.01);
+        assert!(queue_body_scale(4) < hero_body_scale(0) * 1.25);
+        assert!(front_stand(4) < 540.0 && front_stand(4) > 400.0);
+        assert!(treat_x(4) > front_stand(4) + 200.0);
+        let xs = queue_targets(&["จักรพรรดิเพชร", "มะลิ", "สมชาย"], &[4usize, 0, 1], 5);
+        assert!((xs[0] - front_stand(4)).abs() < 0.1);
+        assert!(xs[1] < xs[0] - 160.0);
+        assert!(xs[2] > 0.0, "queued cats must stay on-screen, xs={xs:?}");
+        assert!(xs[1] - xs[2] >= 120.0, "waiters must not stack, xs={xs:?}");
     }
 }
