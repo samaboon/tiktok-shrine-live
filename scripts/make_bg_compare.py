@@ -12,20 +12,23 @@ MODES = {
     'idle':     ('--shot-at', '3'),
 }
 extra = sys.argv[1:]  # e.g. --props off
-f = ImageFont.truetype(F, 30)
+# Thai captions need the embedded Thai font (NotoSans-Bold has no Thai glyphs -> tofu)
+f = ImageFont.truetype('assets/fonts/NotoSansThai-Bold.ttf', 32)
+HB = 64  # header bar height, above each panel (never over the image)
+GAP = 16
 for mode, args in MODES.items():
     panels = []
     for bg, label in (('scene', 'ฉากเต็ม'), ('transparent', 'โปร่งใส')):
         raw = render(f'{mode}_{bg}', *args, '--bg', bg, *extra, opaque=(bg == 'scene'))
-        im = composite(raw, None)
-        d = ImageDraw.Draw(im, 'RGBA')
-        tw = d.textlength(label, font=f)
-        d.rounded_rectangle([12, 920 - 46, 12 + tw + 32, 920], radius=20, fill=(0, 0, 0, 170))
-        d.text((28, 920 - 42), label, font=f, fill=(255, 230, 140))
-        panels.append(im)
-    out = Image.new('RGB', (1096, 960), (20, 20, 20))
-    out.paste(panels[0], (0, 0))
-    out.paste(panels[1], (556, 0))
+        panels.append((label, composite(raw, None)))
+    pw, ph = panels[0][1].size
+    out = Image.new('RGB', (pw * 2 + GAP, HB + ph), (24, 22, 30))
+    d = ImageDraw.Draw(out)
+    for i, (label, im) in enumerate(panels):
+        x0 = i * (pw + GAP)
+        d.rectangle([x0, 0, x0 + pw - 1, HB - 1], fill=(48, 36, 70) if i == 0 else (30, 60, 80))
+        d.text((x0 + pw / 2, HB / 2), label, font=f, fill=(255, 230, 140), anchor='mm')
+        out.paste(im, (x0, HB))
     p = f'screenshots/live_bg_compare_{mode}.png'
     out.save(p)
     print('saved', p)
