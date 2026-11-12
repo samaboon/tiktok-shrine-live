@@ -388,7 +388,7 @@ pub fn restart_bridge(ctl: &BridgeCtl, username: &str, sign_key: &str, node: &st
     let mut st = ctl.lock().unwrap();
     st.username = username.trim().trim_start_matches('@').to_string();
     st.sign_key = sign_key.trim().to_string();
-    st.node = if node.trim().is_empty() { "node".into() } else { node.trim().to_string() };
+    st.node = node.trim().to_string();
     st.enabled = enabled;
     st.generation += 1;
     if let Some(c) = st.child.as_mut() {
@@ -429,7 +429,9 @@ impl EventSource for TikTokBridgeSource {
                     continue;
                 }
                 status(format!("กำลังเชื่อมต่อ @{user} ..."));
-                let mut cmd = Command::new(find_node(&node));
+                let (node_bin, node_src) = crate::runtime::resolve_node(&node);
+                eprintln!("[tiktok] runtime: {node_src} {}", node_bin.display());
+                let mut cmd = Command::new(&node_bin);
                 cmd.arg(&script).arg(&user);
                 if !key.is_empty() {
                     cmd.arg("--sign-key").arg(&key);
@@ -480,8 +482,8 @@ impl EventSource for TikTokBridgeSource {
                         }
                     }
                     Err(e) => {
-                        eprintln!("[tiktok] รัน `{node}` ไม่ได้ ({e}) - ติดตั้ง Node.js แล้วรัน `npm install` ในโฟลเดอร์ bridge");
-                        status("ไม่พบ Node.js - ดู README".into());
+                        eprintln!("[tiktok] รันตัวเชื่อมไม่ได้: {} ({e})", node_bin.display());
+                        status("ไม่พบตัวรันตัวเชื่อม - กดอัปเดต หรือดาวน์โหลดโปรแกรมใหม่".into());
                     }
                 }
                 // wait before reconnect unless settings changed

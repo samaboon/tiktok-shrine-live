@@ -19,11 +19,21 @@ for s in 16 32 64 128 256 512; do
   d=$((s*2)); sips -z $d $d assets/icon/icon.png --out $ICONSET/icon_${s}x${s}@2x.png >/dev/null
 done
 iconutil -c icns $ICONSET -o "$APP/Contents/Resources/AppIcon.icns"
-# ad-hoc signature (not notarized -> first open: right-click > Open)
-codesign --force --deep -s - "$APP" || true
+# bundled Node.js runtime for the TikTok connector: the Mach-O goes next to the main binary (code location),
+# its licence/version under Resources so nothing but code sits in Contents/MacOS
+RT=dist/rt-mac
+packaging/fetch_node.sh mac "$RT"
+cp "$RT/node" "$APP/Contents/MacOS/node"
+mkdir -p "$APP/Contents/Resources/runtime"
+cp "$RT/LICENSE-node.txt" "$RT/NODE_VERSION" "$APP/Contents/Resources/runtime/"
+# ad-hoc signature (not notarized -> first open needs approval, see docs/ติดตั้ง-Mac.md)
+# sign the nested node first, then the bundle (seals it as part of the app)
+codesign --force -s - "$APP/Contents/MacOS/node"
+codesign --force -s - "$APP"
+codesign --verify --deep --strict --verbose=2 "$APP"
 # dmg
 mkdir -p dist/dmg && cp -R "$APP" dist/dmg/ && ln -s /Applications dist/dmg/Applications
-cp docs/คู่มือ.md dist/dmg/ 2>/dev/null || true
+cp docs/คู่มือ.md docs/ติดตั้ง-Mac.md dist/dmg/ 2>/dev/null || true
 hdiutil create -volname "TikTok Shrine Live" -srcfolder dist/dmg -ov -format UDZO "dist/TikTokShrineLive-macOS-universal.dmg"
 echo "built: dist/TikTokShrineLive-macOS-universal.dmg"
 # zip of the .app for the in-app updater (keeps signature/permissions)

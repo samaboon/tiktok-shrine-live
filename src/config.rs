@@ -165,7 +165,7 @@ impl Default for TikTokCfg {
         Self {
             username: String::new(),
             enabled: true,
-            node_command: "node".into(),
+            node_command: String::new(),
             bridge_script: "bridge/bridge.js".into(),
             sign_api_key: String::new(),
             reconnect_seconds: 15,

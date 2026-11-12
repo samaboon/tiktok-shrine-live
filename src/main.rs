@@ -7,6 +7,7 @@ mod config;
 mod events;
 mod krathong;
 mod scene;
+mod runtime;
 mod updater;
 
 use app::{AppInit, ShotPlan, ShrineApp};
@@ -184,6 +185,13 @@ fn extract_bridge(dir: &Path) -> PathBuf {
 /// (missing system libraries, wrong CPU, corrupt download...).
 fn early_flags() {
     let a: Vec<String> = std::env::args().skip(1).collect();
+    if a.iter().any(|x| x == "--which-node") {
+        // diagnostics: which runtime the TikTok connector would use
+        let (p, src) = runtime::resolve_node("");
+        let v = runtime::node_version_of(&p).unwrap_or_else(|e| e);
+        println!("{src} {} {v}", p.display());
+        std::process::exit(if src == "none" { 4 } else { 0 });
+    }
     if a.iter().any(|x| x == "--version") {
         println!("tiktok-shrine-live {}", env!("CARGO_PKG_VERSION"));
         std::process::exit(0);
@@ -212,6 +220,7 @@ fn early_flags() {
 
 fn main() -> eframe::Result<()> {
     early_flags();
+    runtime::cleanup_old();
     let args = parse_args();
     let dir = resolve_config_dir();
     let cfg_path = args.config.clone().unwrap_or_else(|| dir.join("config.toml"));

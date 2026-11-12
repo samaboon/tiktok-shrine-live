@@ -11,8 +11,8 @@ mode = "shrine"
 username = ""
 # เปิดตัวเชื่อม (Node.js bridge) อัตโนมัติ
 enabled = true
-# คำสั่ง node และสคริปต์ bridge ("" = ใช้ตัวที่ฝังมาในโปรแกรม)
-node_command = "node"
+# ขั้นสูง: ตำแหน่ง Node.js เอง ("" = อัตโนมัติ: ใช้ตัวที่มากับโปรแกรม ไม่ต้องติดตั้งอะไรเพิ่ม)
+node_command = ""
 bridge_script = ""
 # API key ของ EulerStream (ไม่บังคับ แต่ช่วยให้เชื่อมต่อเสถียรขึ้น) https://www.eulerstream.com
 sign_api_key = ""

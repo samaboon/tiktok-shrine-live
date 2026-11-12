@@ -20,13 +20,24 @@ jobs:
         run: cargo build --release
       - name: Test
         run: cargo test --release
+      - name: Fetch bundled Node.js runtime
+        shell: bash
+        run: packaging/fetch_node.sh win dist/rt-win
       - name: Package zip
         shell: bash
-        run: packaging/make_windows_zip.sh target/release/tiktok-shrine-live.exe
+        run: RUNTIME_DIR=dist/rt-win packaging/make_windows_zip.sh target/release/tiktok-shrine-live.exe
+      - name: Verify bundled runtime is found
+        shell: bash
+        run: |
+          ./dist/TikTokShrineLive/TikTokShrineLive.exe --which-node | tee which.txt
+          grep -q '^bundled ' which.txt
+          ls -la dist/*.zip
       - uses: actions/upload-artifact@v5
         with:
           name: TikTokShrineLive-Windows-x64
-          path: dist/TikTokShrineLive-Windows-x64.zip
+          path: |
+            dist/TikTokShrineLive-Windows-x64.zip
+            dist/runtime-node-win-x64.zip
 
   macos:
     # macos-14 image config is no longer accepted -> use the current Apple-silicon image
@@ -43,6 +54,11 @@ jobs:
           file "dist/TikTok Shrine Live.app/Contents/MacOS/tiktok-shrine-live"
           lipo -info "dist/TikTok Shrine Live.app/Contents/MacOS/tiktok-shrine-live"
           plutil -lint "dist/TikTok Shrine Live.app/Contents/Info.plist"
+          lipo -info "dist/TikTok Shrine Live.app/Contents/MacOS/node"
+          codesign -dv "dist/TikTok Shrine Live.app/Contents/MacOS/node"
+          "dist/TikTok Shrine Live.app/Contents/MacOS/tiktok-shrine-live" --which-node | tee which.txt
+          grep -q '^bundled ' which.txt
+          ls -la dist/*.dmg dist/*.zip
       - uses: actions/upload-artifact@v5
         with:
           name: TikTokShrineLive-macOS-universal
@@ -62,14 +78,23 @@ jobs:
           NEED=$(objdump -T target/release/tiktok-shrine-live | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
           echo "binary needs $NEED"
           ./target/release/tiktok-shrine-live --selftest
-      - name: Package tar.gz
+      - name: Package tar.gz (+ bundled Node.js runtime)
         run: |
-          mkdir -p dist/pkg && cp target/release/tiktok-shrine-live config.toml docs/คู่มือ.md dist/pkg/
+          mkdir -p dist/pkg && cp target/release/tiktok-shrine-live config.toml docs/คู่มือ.md NOTICE.md dist/pkg/
+          packaging/fetch_node.sh linux dist/pkg/runtime
+          dist/pkg/tiktok-shrine-live --which-node | tee which.txt
+          grep -q '^bundled ' which.txt
           tar -czf dist/TikTokShrineLive-Linux-x64.tar.gz -C dist/pkg .
+          tar -czf dist/runtime-node-x64-glibc.tar.gz -C dist/pkg runtime
+          printf '{"node":"%s"}\n' "$(cat packaging/NODE_VERSION)" > dist/runtime-version.json
+          ls -la dist/*.tar.gz
       - uses: actions/upload-artifact@v5
         with:
           name: TikTokShrineLive-Linux-x64
-          path: dist/TikTokShrineLive-Linux-x64.tar.gz
+          path: |
+            dist/TikTokShrineLive-Linux-x64.tar.gz
+            dist/runtime-node-x64-glibc.tar.gz
+            dist/runtime-version.json
 
   bridge:
     # Build the TikTok connector bundle (bridge.js) so the app can update only the
@@ -118,3 +143,4 @@ jobs:
             out/**/*.tar.gz
             out/bridge/bridge.cjs
             out/bridge/bridge-version.json
+            out/**/runtime-version.json

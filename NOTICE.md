@@ -8,6 +8,7 @@
 | ส่วนประกอบ | ผู้พัฒนา | สัญญาอนุญาต | ใช้ทำอะไร |
 |---|---|---|---|
 | [tiktok-live-connector](https://github.com/zerodytrash/TikTok-Live-Connector) | zerodytrash และผู้ร่วมพัฒนา | AGPL-3.0 | อ่านอีเวนต์ของขวัญจาก TikTok LIVE (`bridge/dist/bridge.cjs`) |
+| [Node.js](https://nodejs.org) (รุ่นพกพาทางการ ไม่ได้แก้ไข) | OpenJS Foundation และผู้ร่วมพัฒนา | MIT (+ สัญญาอนุญาตของไลบรารีที่ Node รวมไว้ ดูไฟล์ `LICENSE-node.txt`) | ตัวรันตัวเชื่อม TikTok — Windows/Linux: `runtime/node(.exe)` · macOS: `Contents/MacOS/node` (+ `Contents/Resources/runtime/LICENSE-node.txt`) |
 | Noto Sans / Noto Sans Thai | Google / Noto project | SIL OFL 1.1 (`assets/fonts/OFL.txt`) | ฟอนต์ไทยและตัวเลข |
 | egui / eframe, tiny_http, serde, toml, image, fastrand | ผู้พัฒนาแต่ละโปรเจกต์ | MIT / Apache-2.0 | ส่วนติดต่อผู้ใช้ เซิร์ฟเวอร์ HTTP อ่านค่าตั้ง |
 

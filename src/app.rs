@@ -415,7 +415,8 @@ impl ShrineApp {
                     }
                 }
                 ControlCmd::Update(u) => match u.as_str() {
-                    "apply" => self.updater.apply(),
+                    "apply" | "all" => self.updater.update_all(self.cfg.tiktok.node_command.clone()),
+                    "app" => self.updater.apply(),
                     "bridge" => self.updater.update_bridge(self.cfg.tiktok.node_command.clone()),
                     _ => self.updater.check(),
                 },
@@ -1987,9 +1988,6 @@ impl ShrineApp {
             ui.label("EulerStream API key");
             ui.add(egui::TextEdit::singleline(&mut self.cfg.tiktok.sign_api_key).password(true).hint_text("ไม่บังคับ").desired_width(260.0));
             ui.end_row();
-            ui.label("คำสั่ง Node.js");
-            ui.add(egui::TextEdit::singleline(&mut self.cfg.tiktok.node_command).desired_width(260.0));
-            ui.end_row();
         });
         ui.horizontal(|ui| {
             if ui.add(egui::Button::new(egui::RichText::new("เชื่อมต่อ / เชื่อมต่อใหม่").size(17.0)).min_size(Vec2::new(240.0, 38.0))).clicked() {
@@ -1998,8 +1996,16 @@ impl ShrineApp {
         });
         ui.label(egui::RichText::new(format!("สถานะ: {}", if self.status.is_empty() { "-" } else { &self.status })).size(16.0).strong());
         ui.separator();
-        ui.label("ต้องเปิดไลฟ์อยู่ก่อนถึงจะเชื่อมต่อได้ และต้องติดตั้ง Node.js (https://nodejs.org) ในเครื่อง");
+        ui.label("ต้องเปิดไลฟ์อยู่ก่อนถึงจะเชื่อมต่อได้ (ตัวเชื่อม TikTok มากับโปรแกรมแล้ว ไม่ต้องติดตั้งอะไรเพิ่ม)");
         ui.label(format!("หรือใช้ TikFinity / Streamer.bot ส่ง Webhook มาที่ http://{}/event", self.cfg.http.bind));
+        egui::CollapsingHeader::new("ขั้นสูง").id_salt("tt_adv").show(ui, |ui| {
+            ui.label(format!("ตัวรันตัวเชื่อม: {}", crate::runtime::describe(&self.cfg.tiktok.node_command)));
+            ui.horizontal(|ui| {
+                ui.label("ตำแหน่ง Node.js เอง");
+                ui.add(egui::TextEdit::singleline(&mut self.cfg.tiktok.node_command).hint_text("เว้นว่าง = อัตโนมัติ").desired_width(260.0));
+            });
+            ui.label(egui::RichText::new("ปกติไม่ต้องใส่ — ใช้เมื่ออยากใช้ Node.js ของตัวเองแทนตัวที่มากับโปรแกรม").small().weak());
+        });
     }
 
     fn tab_window(&mut self, ui: &mut egui::Ui) {
@@ -2243,17 +2249,18 @@ impl ShrineApp {
     // ------------------------------------------------------------------ updates
     fn update_banner_ui(&mut self, ui: &mut egui::Ui) {
         let s = self.updater.snapshot();
-        if s.available && !s.busy && s.restart.is_none() {
-            let tag = s.latest.as_ref().map(|l| l.tag.clone()).unwrap_or_default();
+        if !s.pending().is_empty() && s.restart.is_none() {
             egui::Frame::new().fill(Color32::from_rgb(120, 80, 10)).corner_radius(8).inner_margin(8).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(format!("มีเวอร์ชันใหม่ {tag} (ตอนนี้ v{})", s.current)).size(17.0).strong().color(Color32::WHITE));
-                    if ui.add(egui::Button::new(egui::RichText::new("อัปเดตเลย").size(17.0).strong()).fill(Color32::from_rgb(30, 150, 70))).clicked() {
-                        self.updater.apply();
-                        self.settings_tab = 7;
-                    }
-                    if ui.button("ดูรายละเอียด").clicked() {
-                        self.settings_tab = 7;
+                ui.horizontal_wrapped(|ui| {
+                    if s.busy {
+                        ui.spinner();
+                        ui.label(egui::RichText::new(&s.phase).color(Color32::WHITE));
+                    } else {
+                        if ui.add(egui::Button::new(egui::RichText::new("มีอัปเดต — กดเพื่ออัปเดต").size(17.0).strong()).fill(Color32::from_rgb(30, 150, 70))).clicked() {
+                            self.updater.update_all(self.cfg.tiktok.node_command.clone());
+                            self.settings_tab = 7;
+                        }
+                        ui.label(egui::RichText::new(s.pending_text()).color(Color32::WHITE));
                     }
                 });
             });
@@ -2262,34 +2269,49 @@ impl ShrineApp {
 
     fn tab_update(&mut self, ui: &mut egui::Ui) {
         let s = self.updater.snapshot();
-        ui.heading("อัปเดตโปรแกรม");
-        ui.label(format!("เวอร์ชันที่ใช้อยู่: v{}", s.current));
-        match (&s.latest, s.checking) {
-            (_, true) => {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label("กำลังตรวจหาอัปเดต...");
-                });
-            }
-            (Some(l), _) => {
-                if s.available {
-                    ui.label(egui::RichText::new(format!("มีเวอร์ชันใหม่: {}", l.tag)).size(18.0).strong().color(Color32::from_rgb(255, 210, 80)));
-                } else {
-                    ui.label(egui::RichText::new(format!("เป็นเวอร์ชันล่าสุดแล้ว ({})", l.tag)).color(Color32::from_rgb(120, 220, 120)));
-                }
-            }
-            _ => {}
-        }
+        ui.heading("อัปเดต");
+        ui.label("ปุ่มเดียวอัปเดตครบ: ตัวรัน > ตัวเชื่อม TikTok > ตัวแอป (แอปเปิดใหม่เองเป็นขั้นสุดท้าย) ทุกขั้นทดสอบก่อนใช้ ถ้าไม่ผ่านจะกลับไปใช้ของเดิม");
+        let dash = |o: &Option<String>, checking: bool| o.clone().unwrap_or_else(|| if checking { "กำลังตรวจ...".into() } else { "-".into() });
+        egui::Grid::new("vers").num_columns(3).spacing([16.0, 6.0]).show(ui, |ui| {
+            ui.label("");
+            ui.label(egui::RichText::new("ที่ใช้อยู่").strong());
+            ui.label(egui::RichText::new("ล่าสุด").strong());
+            ui.end_row();
+            ui.label("แอป");
+            ui.label(format!("v{}", s.current));
+            ui.label(dash(&s.latest.as_ref().map(|l| l.tag.clone()), s.checking));
+            ui.end_row();
+            ui.label("ตัวเชื่อม TikTok");
+            ui.label(&s.bridge_current);
+            ui.label(dash(&s.bridge_release, s.bridge_checking));
+            ui.end_row();
+            ui.label("ตัวรัน (Node.js ที่มากับโปรแกรม)");
+            ui.label(s.runtime_current.clone().unwrap_or_else(|| "ยังไม่มี".into()));
+            ui.label(if s.runtime_managed { dash(&s.runtime_release, s.checking) } else { "มากับแอป".into() });
+            ui.end_row();
+        });
+        ui.add_space(6.0);
+        let pending = s.pending();
         ui.horizontal(|ui| {
-            if ui.add_enabled(!s.checking && !s.busy, egui::Button::new(egui::RichText::new("ตรวจหาอัปเดต").size(17.0)).min_size(Vec2::new(180.0, 38.0))).clicked() {
+            if ui.add_enabled(!s.checking && !s.busy, egui::Button::new(egui::RichText::new("ตรวจหาอัปเดต").size(17.0)).min_size(Vec2::new(160.0, 38.0))).clicked() {
                 self.updater.check();
             }
-            if s.available && ui.add_enabled(!s.busy, egui::Button::new(egui::RichText::new("อัปเดตเลย").size(17.0).strong()).fill(Color32::from_rgb(30, 150, 70)).min_size(Vec2::new(160.0, 38.0))).clicked() {
-                self.updater.apply();
+            if !pending.is_empty() && ui.add_enabled(!s.busy && s.restart.is_none(), egui::Button::new(egui::RichText::new("มีอัปเดต — กดเพื่ออัปเดต").size(17.0).strong()).fill(Color32::from_rgb(30, 150, 70)).min_size(Vec2::new(240.0, 38.0))).clicked() {
+                self.updater.update_all(self.cfg.tiktok.node_command.clone());
             }
             ui.checkbox(&mut self.cfg.update.check_on_start, "ตรวจทุกครั้งที่เปิดโปรแกรม");
         });
-        if s.busy || s.restart.is_some() {
+        if s.checking {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("กำลังตรวจหาอัปเดต...");
+            });
+        } else if !pending.is_empty() {
+            ui.label(egui::RichText::new(format!("มีอัปเดต: {}", s.pending_text())).size(17.0).strong().color(Color32::from_rgb(255, 210, 80)));
+        } else if s.checked && s.error.is_empty() {
+            ui.label(egui::RichText::new("ทุกอย่างเป็นเวอร์ชันล่าสุดแล้ว").color(Color32::from_rgb(120, 220, 120)));
+        }
+        if s.busy || s.restart.is_some() || !s.phase.is_empty() {
             ui.label(&s.phase);
             if let Some((a, b)) = s.progress {
                 let frac = if b > 0 { a as f32 / b as f32 } else { 0.0 };
@@ -2308,37 +2330,32 @@ impl ShrineApp {
             }
         }
         ui.separator();
-        ui.heading("อัปเดตตัวเชื่อม TikTok");
-        ui.label("ถ้า TikTok เปลี่ยนระบบแล้วเชื่อมต่อไม่ได้ กดปุ่มนี้เพื่ออัปเดตเฉพาะตัวเชื่อม (tiktok-live-connector) ไม่ต้องรอแอปเวอร์ชันใหม่");
-        egui::Grid::new("bridgever").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
-            ui.label("ที่ใช้อยู่");
-            ui.label(egui::RichText::new(&s.bridge_current).strong());
-            ui.end_row();
-            ui.label("ล่าสุด (ไฟล์สำเร็จรูป)");
-            ui.label(s.bridge_release.clone().unwrap_or_else(|| if s.bridge_checking { "กำลังตรวจ...".into() } else { "-".into() }));
-            ui.end_row();
-            ui.label("ล่าสุด (npm)");
-            ui.label(s.bridge_npm.clone().unwrap_or_else(|| if s.bridge_checking { "กำลังตรวจ...".into() } else { "-".into() }));
-            ui.end_row();
-        });
-        ui.horizontal(|ui| {
-            if ui.add_enabled(!s.bridge_busy, egui::Button::new(egui::RichText::new("อัปเดตตัวเชื่อม TikTok").size(17.0)).min_size(Vec2::new(240.0, 38.0))).clicked() {
-                self.updater.update_bridge(self.cfg.tiktok.node_command.clone());
-            }
-            if s.bridge_busy {
-                ui.spinner();
+        egui::CollapsingHeader::new("ขั้นสูง: อัปเดตเฉพาะตัวเชื่อม TikTok").id_salt("upd_adv").show(ui, |ui| {
+            ui.label("ใช้เมื่อ TikTok เปลี่ยนระบบและยังไม่มีไฟล์สำเร็จรูป: ลองติดตั้ง tiktok-live-connector ล่าสุดจาก npm (ต้องมี npm ในเครื่อง)");
+            ui.label(format!("npm ล่าสุด: {}", dash(&s.bridge_npm, s.bridge_checking)));
+            ui.horizontal(|ui| {
+                if ui.add_enabled(!s.bridge_busy, egui::Button::new("อัปเดตเฉพาะตัวเชื่อม")).clicked() {
+                    self.updater.update_bridge(self.cfg.tiktok.node_command.clone());
+                }
+                if s.bridge_busy {
+                    ui.spinner();
+                }
+            });
+            if !s.bridge_msg.is_empty() {
+                ui.label(&s.bridge_msg);
             }
         });
-        if !s.bridge_msg.is_empty() {
-            ui.label(&s.bridge_msg);
-        }
     }
 
     fn handle_updates(&mut self, ctx: &egui::Context) {
-        let (restart, script) = {
+        let (restart, script, reconnect) = {
             let mut st = self.updater.st.lock().unwrap();
-            (st.restart.take(), st.bridge_new_script.take())
+            let r = std::mem::take(&mut st.bridge_reconnect);
+            (st.restart.take(), st.bridge_new_script.take(), r)
         };
+        if reconnect && script.is_none() && restart.is_none() {
+            self.reconnect();
+        }
         if let Some(script) = script {
             self.bridge.lock().unwrap().script = script;
             self.reconnect();

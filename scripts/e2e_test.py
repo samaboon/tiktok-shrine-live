@@ -63,6 +63,11 @@ def main():
         s = wait_for(lambda s: 'frame' in s, 15)
         check('app starts, /state responds', 'frame' in s, f"version {s.get('version')}")
         check('GET /health', get('/health') == (200, 'ok'))
+        # one-button updater exposes app + connector + runtime status; connector runtime resolves without a Node install
+        u = s.get('update', {})
+        check('update state: one-button fields (pending/runtime/connector)', all(k in u for k in ('pending', 'pending_text', 'runtime_current', 'runtime_managed', 'bridge_current')) and isinstance(u['pending'], list), json.dumps({k: u.get(k) for k in ('pending', 'runtime_current', 'bridge_current')}))
+        wn = subprocess.run([BIN, '--which-node'], capture_output=True, text=True, timeout=30)
+        check('--which-node resolves a runtime (bundled/system)', wn.returncode == 0 and wn.stdout.split()[0] in ('bundled', 'system', 'custom'), wn.stdout.strip())
         check('idle at start (still picture, no character)', s['idle'] and s['current'] is None and s['idle_mode'] == 'still')
         t1 = state()['scene_time']; time.sleep(1.0); t2 = state()['scene_time']
         check('still idle: scene frozen (no moving effects)', abs(t2 - t1) < 1e-4, f'{t1:.3f} -> {t2:.3f}')

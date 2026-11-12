@@ -4,7 +4,12 @@
 
 เลือกโหมดได้ในหน้าตั้งค่า: **ไหว้พระ / เสี่ยงเซียมซี**, **ลอยกระทง**, หรือ **ให้อาหารแมว** (แมวน่ารักเดินเข้าคิว กินตามยอดของขวัญ แล้วขึ้นการ์ดขอบคุณมีชื่อคนส่ง — ไม่มีเลขมงคล ชื่อคนส่งลอยบนหัวทุกตัว)
 
-📖 **คู่มือติดตั้ง-ใช้งานแบบละเอียดทีละขั้น: [docs/คู่มือ.md](docs/คู่มือ.md)**
+## 📥 เริ่มที่นี่ — คู่มือติดตั้งแยกตามเครื่อง (ทีละขั้น จนเริ่มไลฟ์ได้)
+| 🪟 **[ติดตั้งบน Windows](docs/ติดตั้ง-Windows.md)** | 🍎 **[ติดตั้งบน Mac](docs/ติดตั้ง-Mac.md)** |
+|---|---|
+| ดาวน์โหลด `TikTokShrineLive-Windows-x64.zip` → แตกไฟล์ → เปิด | ดาวน์โหลด `TikTokShrineLive-macOS-universal.dmg` → ลากเข้า Applications → เปิด |
+
+**ไม่ต้องติดตั้ง Node.js หรือโปรแกรมอื่น** — ตัวเชื่อม TikTok มากับโปรแกรมแล้ว · การตั้งค่าที่ใช้เหมือนกันทั้งสองระบบ: [docs/คู่มือ.md](docs/คู่มือ.md)
 
 ![ตัวอย่างบนไลฟ์](screenshots/live_pray_t5.png) ![หลายคนต่อแถว](screenshots/live_multi_3senders.png) ![ตัวอย่างเซียมซี](screenshots/live_siamsi_t3.png) ![ลอยกระทง](screenshots/live_krathong_t5_bless.png)
 
@@ -12,7 +17,9 @@
 
 ## มีอะไรใหม่ใน v0.2.1
 - **โหมดให้อาหารแมว** 🐱 — แมวของผู้ส่งเดินมาที่ชาม กินตามยอดของขวัญ แล้วขึ้น **การ์ดขอบคุณ** มีชื่อคนส่ง (ไม่มีเลขมงคล) · หลายคนส่งพร้อมกันแมวนั่งต่อแถว · `F2` สลับ 3 โหมด
-- **อัปเดตปลอดภัยขึ้น**: หลังสลับไฟล์ โปรแกรมจะทดลองเปิดไฟล์ใหม่ (`--selftest`) ก่อน ถ้าเปิดไม่ได้จะ **ย้อนกลับเป็นเวอร์ชันเดิมเองและทำงานต่อ**
+- **ไม่ต้องติดตั้ง Node.js อีกต่อไป**: ไฟล์ Windows zip / Mac .app / Linux tar.gz มี Node.js รุ่นพกพา (ทางการ, MIT) สำหรับตัวเชื่อม TikTok มาให้ — โปรแกรมใช้ตัวที่มากับโปรแกรมก่อน ถ้าไม่มีค่อยใช้ Node.js ในเครื่อง (ใส่ตำแหน่งเองได้ในแท็บ TikTok → ขั้นสูง)
+- **อัปเดตปุ่มเดียว**: ตรวจ แอป + ตัวเชื่อม TikTok + ตัวรัน พร้อมกัน ถ้ามีอะไรใหม่ขึ้นปุ่ม **"มีอัปเดต — กดเพื่ออัปเดต"** ทำให้ครบตามลำดับ ตัวรัน → ตัวเชื่อม → แอป (เปิดใหม่เองท้ายสุด) ทุกขั้นทดสอบก่อนใช้ ถ้าไม่ผ่าน **ย้อนกลับเป็นของเดิมเองและทำงานต่อ**
+- **คู่มือติดตั้งแยก Windows / Mac** ([Windows](docs/ติดตั้ง-Windows.md) · [Mac](docs/ติดตั้ง-Mac.md))
 - **ตั้งค่า "พื้นหลัง" ใช้ได้ทั้ง 3 โหมด** (แท็บหน้าจอ / `F9`): **ฉากเต็ม** (วัด / แม่น้ำยามค่ำ / มุมแมว) หรือ **โปร่งใส** — เห็นกล้องของสตรีมเมอร์ เหลือแค่ตัวละคร ป้ายชื่อ การ์ด พลุ + ของประกอบเล็ก ๆ (ศาล / เส้นน้ำ+ท่าน้ำ / ชามข้าวแมว ปิดได้) ตัวละครมีเงานุ่ม ๆ ด้านหลังให้อ่านออกบนกล้องทุกแบบ · ตอนว่างในโหมดโปร่งใส = ไม่มีอะไรทับกล้องเลย (เหลือแค่ข้อความแนะนำเล็ก ๆ)
 - ป้ายชื่อไม่ถูกการ์ดผลบัง (ป้ายชื่ออยู่ชั้นบนสุด, การ์ดลอยกระทงชิดขวา) · ป้ายชื่อไม่ล้นขอบจอ · ป้ายที่ซ้อนกันจะขยับหลบให้เอง
 - ไฟล์ Linux build บน Ubuntu 22.04 (ใช้ได้กับ Linux รุ่นเก่ากว่า) · เพิ่ม `--version`
@@ -46,16 +53,16 @@
 - ของขวัญแบบคอมโบ (streak) นับตอนจบคอมโบครั้งเดียว ไม่นับซ้ำ
 - ฟอนต์ไทย **Noto Sans Thai** + ตัวเชื่อม TikTok **ฝังอยู่ในไฟล์โปรแกรม** — Windows ใช้แค่ไฟล์ .exe ไฟล์เดียว (config สร้างให้อัตโนมัติ)
 - ภาพทั้งหมดวาดด้วยโค้ด ใส่ PNG ของตัวเองแทนได้ที่ `assets/sprites/` (`buddha.png`, `character.png`, `background.png`)
-- รับเหตุการณ์ได้ 3 ทาง: **TikTok โดยตรง** (Node bridge), **HTTP/Webhook** (TikFinity, Streamer.bot, curl), **คีย์บอร์ด** ทดสอบ
+- รับเหตุการณ์ได้ 3 ทาง: **TikTok โดยตรง** (ตัวเชื่อม tiktok-live-connector รันด้วย Node.js ที่มากับโปรแกรม), **HTTP/Webhook** (TikFinity, Streamer.bot, curl), **คีย์บอร์ด** ทดสอบ
 
 ## ดาวน์โหลด / ติดตั้ง (สรุป)
 | ระบบ | วิธี |
 |---|---|
 | **Windows** | แตก `TikTokShrineLive-Windows-x64.zip` → ดับเบิลคลิก `TikTokShrineLive.exe` (ถ้า SmartScreen เตือน: More info → Run anyway) |
-| **macOS** | เปิด `.dmg` → ลากเข้า Applications → **ครั้งแรกให้คลิกขวา → Open → Open** (หรือ System Settings → Privacy & Security → Open Anyway) |
-| ทั้งสองระบบ | ติดตั้ง **Node.js LTS** (https://nodejs.org) สำหรับเชื่อม TikTok โดยตรง |
+| **macOS** | เปิด `.dmg` → ลากเข้า Applications → ครั้งแรก: macOS 15+ ลองเปิด → **System Settings → Privacy & Security → Open Anyway** (macOS 14 หรือเก่ากว่า: คลิกขวา → Open) |
+| ทั้งสองระบบ | ไม่ต้องลงอะไรเพิ่ม (Node.js รุ่นพกพามากับโปรแกรมสำหรับตัวเชื่อม TikTok) |
 
-รายละเอียด, การใส่ใน **TikTok LIVE Studio / OBS**, เช็กลิสต์ก่อนไลฟ์, แก้ปัญหา → [docs/คู่มือ.md](docs/คู่มือ.md)
+ทีละขั้นพร้อม OBS / TikTok LIVE Studio / มือถือเป็นกล้อง / แก้ปัญหา → [Windows](docs/ติดตั้ง-Windows.md) · [Mac](docs/ติดตั้ง-Mac.md)
 
 ## ปุ่มลัด (คลิกหน้าต่างเอฟเฟกต์ก่อน)
 | ปุ่ม | ผล |
@@ -143,7 +150,7 @@ TikTok **ไม่มี API ทางการ** สำหรับอ่าน
 |---|---|---|
 | Rust crate `tiktoklive` (TikTokLiveRust) | อัปเดตล่าสุด ส.ค. 2024 — ค้างนาน เสี่ยงพังกับ TikTok ปัจจุบัน | ❌ |
 | Node `tiktok-live-connector` (zerodytrash) | ดูแลต่อเนื่อง v2.5.0 (ก.ย. 2026), ใช้ sign server ของ EulerStream | ✅ **หลัก** (bridge ฝังในโปรแกรม) |
-| TikFinity / Streamer.bot → Webhook | แอปสำเร็จรูป ไม่ต้องลง Node | ✅ **สำรอง** ผ่าน HTTP |
+| TikFinity / Streamer.bot → Webhook | แอปสำเร็จรูปของคนอื่น | ✅ **สำรอง** ผ่าน HTTP |
 
 โปรแกรม Rust จะรัน `node bridge.cjs <username>` (สคริปต์ bundle รวม dependency แล้ว ฝังใน exe แตกไฟล์ออกมาเองข้าง config) อ่าน JSON ทีละบรรทัดจาก stdout และ **ต่อใหม่อัตโนมัติ** เมื่อหลุด ทุกแหล่งทำงานผ่าน trait `EventSource` เปลี่ยน/เพิ่มตัวเชื่อมได้โดยไม่แตะส่วนภาพ
 
@@ -179,11 +186,14 @@ cargo build --release                       # Linux/Windows/macOS
 pip install ziglang && cargo install cargo-zigbuild
 rustup target add x86_64-pc-windows-gnu
 cargo zigbuild --release --target x86_64-pc-windows-gnu
-packaging/make_windows_zip.sh
+packaging/fetch_node.sh win dist/rt-win      # Node.js รุ่นพกพา (ตรวจ SHA-256) — เวอร์ชันอยู่ใน packaging/NODE_VERSION
+RUNTIME_DIR=dist/rt-win packaging/make_windows_zip.sh
 # macOS .app + .dmg (universal) — รันบน Mac:
 packaging/macos/make_app.sh
 # build bridge ใหม่ (หลังอัปเดต tiktok-live-connector):
 cd bridge && npm install && npx esbuild bridge.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=dist/bridge.cjs
+# ดูว่าโปรแกรมจะใช้ Node ตัวไหนรันตัวเชื่อม: bundled / system / custom
+./tiktok-shrine-live --which-node
 # ภาพตัวอย่างทั้งหมด (Linux + Xvfb):
 scripts/make_screenshots.sh && python3 scripts/make_composites.py
 # ถ่ายภาพเฟรมเดียว:
