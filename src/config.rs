@@ -28,6 +28,8 @@ pub struct Config {
     pub theme: ThemeCfg,
     pub krathong: KrathongCfg,
     pub cat: CatCfg,
+    pub dance: DanceCfg,
+    pub dunk: DunkCfg,
     pub update: UpdateCfg,
 }
 
@@ -79,7 +81,7 @@ impl Default for UpdateCfg {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ThemeCfg {
-    /// "shrine" = ไหว้พระ / เซียมซี,  "krathong" = ลอยกระทง,  "cat" = ให้อาหารแมว
+    /// "shrine" / "krathong" / "cat" / "dance" / "dunk"
     pub mode: String,
 }
 impl Default for ThemeCfg {
@@ -122,6 +124,76 @@ impl Default for CatCfg {
         Self { hint_text: String::new(), thanks_title: "คำขอบคุณจากแมวถึง".into(), gifts: BTreeMap::new(), thanks: vec![], max_visible: 5 }
     }
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct DanceCfg {
+    pub hint_text: String,
+    pub card_title: String,
+    pub guide_label: String,
+    pub max_visible: usize,
+    /// "auto" = สุ่มจากเวทีที่ปลดล็อกตามขั้น (เวทีใหญ่มีน้ำหนักมากกว่า)
+    /// "random" = สุ่มเท่า ๆ กันจากเวทีที่ปลดล็อก
+    /// หรือระบุคีย์เวที เช่น "floor", "stage", "cloud"
+    pub venue: String,
+    /// คีย์เวทีที่เปิดใช้ ว่าง = ใช้ทั้งหมด
+    pub venues: Vec<String>,
+    pub challenges: Vec<String>,
+    pub combo_joiner: String,
+    /// วินาทีของนับถอยหลังต่อขั้น (1..=5)
+    pub countdown: Vec<f32>,
+    pub gifts: BTreeMap<String, String>,
+}
+impl Default for DanceCfg {
+    fn default() -> Self {
+        Self {
+            hint_text: String::new(),
+            card_title: "ภารกิจเต้น!".into(),
+            guide_label: "ตัวชี้ท่า".into(),
+            max_visible: 6,
+            venue: "auto".into(),
+            venues: vec![],
+            challenges: vec![],
+            combo_joiner: " แล้วต่อด้วย ".into(),
+            countdown: vec![8.0, 10.0, 14.0, 18.0, 24.0],
+            gifts: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct DunkCfg {
+    pub hint_text: String,
+    pub card_title: String,
+    pub dunk_banner: String,
+    /// ใช้ `{name}` แทนชื่อผู้ส่ง
+    pub splash_text: String,
+    pub meter_target: u32,
+    pub max_visible: usize,
+    /// ขั้น (1-based) ที่ดังก์ทันที ค่าเริ่มต้น 5
+    pub instant_dunk_tier: usize,
+    pub meter_add: Vec<u32>,
+    pub balls: Vec<u32>,
+    pub gifts: BTreeMap<String, String>,
+}
+impl Default for DunkCfg {
+    fn default() -> Self {
+        Self {
+            hint_text: String::new(),
+            card_title: "ตกน้ำ!".into(),
+            dunk_banner: "ดังก์! DUNK!".into(),
+            splash_text: "SPLASH! ตกน้ำเพราะ {name}".into(),
+            meter_target: 10,
+            max_visible: 5,
+            instant_dunk_tier: 5,
+            meter_add: vec![1, 2, 4, 7, 10],
+            balls: vec![1, 2, 4, 7, 3],
+            gifts: BTreeMap::new(),
+        }
+    }
+}
+
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -266,6 +338,8 @@ impl Default for Config {
             theme: ThemeCfg::default(),
             krathong: KrathongCfg::default(),
             cat: CatCfg::default(),
+            dance: DanceCfg::default(),
+            dunk: DunkCfg::default(),
             update: UpdateCfg::default(),
         }
     }
@@ -323,11 +397,57 @@ impl Config {
             cfg.cat.thanks_title = def.cat.thanks_title.clone();
         }
         cfg.cat.max_visible = cfg.cat.max_visible.clamp(1, 12);
+        if cfg.dance.challenges.is_empty() {
+            cfg.dance.challenges = def.dance.challenges.clone();
+        }
+        if cfg.dance.hint_text.is_empty() {
+            cfg.dance.hint_text = def.dance.hint_text.clone();
+        }
+        if cfg.dance.card_title.is_empty() {
+            cfg.dance.card_title = def.dance.card_title.clone();
+        }
+        if cfg.dance.guide_label.is_empty() {
+            cfg.dance.guide_label = def.dance.guide_label.clone();
+        }
+        if cfg.dance.combo_joiner.is_empty() {
+            cfg.dance.combo_joiner = def.dance.combo_joiner.clone();
+        }
+        if cfg.dance.countdown.len() < 5 {
+            cfg.dance.countdown = def.dance.countdown.clone();
+        }
+        cfg.dance.max_visible = cfg.dance.max_visible.clamp(1, 12);
+        if cfg.dunk.hint_text.is_empty() {
+            cfg.dunk.hint_text = def.dunk.hint_text.clone();
+        }
+        if cfg.dunk.card_title.is_empty() {
+            cfg.dunk.card_title = def.dunk.card_title.clone();
+        }
+        if cfg.dunk.dunk_banner.is_empty() {
+            cfg.dunk.dunk_banner = def.dunk.dunk_banner.clone();
+        }
+        if cfg.dunk.splash_text.is_empty() {
+            cfg.dunk.splash_text = def.dunk.splash_text.clone();
+        }
+        if cfg.dunk.meter_add.len() < 5 {
+            cfg.dunk.meter_add = def.dunk.meter_add.clone();
+        }
+        if cfg.dunk.balls.len() < 5 {
+            cfg.dunk.balls = def.dunk.balls.clone();
+        }
+        if cfg.dunk.instant_dunk_tier == 0 || cfg.dunk.instant_dunk_tier > 5 {
+            cfg.dunk.instant_dunk_tier = 5;
+        }
+        cfg.dunk.meter_target = cfg.dunk.meter_target.max(1);
+        cfg.dunk.max_visible = cfg.dunk.max_visible.clamp(1, 12);
         let mode = cfg.theme.mode.trim().to_lowercase();
         cfg.theme.mode = if mode == "krathong" || mode.contains("กระทง") {
             "krathong".into()
         } else if mode == "cat" || mode.contains("แมว") || mode.contains("อาหาร") {
             "cat".into()
+        } else if mode == "dance" || mode.contains("เต้น") {
+            "dance".into()
+        } else if mode == "dunk" || mode.contains("ตกน้ำ") || mode.contains("ปาตกน้ำ") || mode.contains("ดังก์") {
+            "dunk".into()
         } else {
             "shrine".into()
         };
@@ -374,6 +494,10 @@ impl Config {
             &self.krathong.gifts
         } else if self.theme.mode == "cat" && !self.cat.gifts.is_empty() {
             &self.cat.gifts
+        } else if self.theme.mode == "dance" && !self.dance.gifts.is_empty() {
+            &self.dance.gifts
+        } else if self.theme.mode == "dunk" && !self.dunk.gifts.is_empty() {
+            &self.dunk.gifts
         } else {
             &self.gifts.map
         };
@@ -413,6 +537,9 @@ mod tests {
         assert_eq!(c.siamsi.fortunes.len(), 28);
         assert_eq!(c.krathong.blessings.len(), 28);
         assert!(c.cat.thanks.len() >= 14, "cat thanks {}", c.cat.thanks.len());
+        assert!(c.dance.challenges.len() >= 8, "dance challenges {}", c.dance.challenges.len());
+        assert_eq!(c.dunk.meter_target, 10);
+        assert_eq!(c.dance.venue, "auto");
         assert_eq!(c.tiers.len(), 5);
         assert_eq!(c.cat.max_visible, 5);
         // no CJK ideographs anywhere in the shipped texts

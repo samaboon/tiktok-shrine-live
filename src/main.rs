@@ -3,6 +3,8 @@
 
 mod app;
 mod cat;
+mod dance;
+mod dunk;
 mod config;
 mod events;
 mod gift_picker;

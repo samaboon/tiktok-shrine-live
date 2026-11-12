@@ -559,6 +559,7 @@ impl Default for Pose {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct Look {
     pub tier: usize,
     pub shirt: Color32,
