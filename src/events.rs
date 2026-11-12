@@ -56,6 +56,8 @@ pub enum ControlCmd {
     Reload,
     /// "check" | "apply" | "bridge"
     Update(String),
+    /// idle look: still | ambient | hidden
+    Idle(String),
 }
 
 #[derive(Debug, Clone)]
@@ -296,6 +298,10 @@ impl EventSource for HttpSource {
                         if get_str(&v, &["reload"]).is_some() {
                             sink.send(Incoming::Control(ControlCmd::Reload));
                             done.push("reload");
+                        }
+                        if let Some(u) = get_str(&v, &["idle"]) {
+                            sink.send(Incoming::Control(ControlCmd::Idle(u)));
+                            done.push("idle");
                         }
                         if let Some(u) = get_str(&v, &["update"]) {
                             sink.send(Incoming::Control(ControlCmd::Update(u)));

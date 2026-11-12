@@ -330,6 +330,11 @@ impl ShrineApp {
                 }
                 ControlCmd::Save => self.save_config(ctx),
                 ControlCmd::Reload => self.reload_config(),
+                ControlCmd::Idle(m) => {
+                    if ["still", "ambient", "hidden"].contains(&m.as_str()) {
+                        self.cfg.window.idle = m;
+                    }
+                }
                 ControlCmd::Update(u) => match u.as_str() {
                     "apply" => self.updater.apply(),
                     "bridge" => self.updater.update_bridge(self.cfg.tiktok.node_command.clone()),
@@ -1282,7 +1287,7 @@ impl ShrineApp {
         let tier = s.tier;
         let cxx = 650.0;
         let wdt = 620.0 + tier as f32 * 16.0;
-        let hgt = 380.0;
+        let hgt = 310.0;
         let fo = smooth((rt - (r - 0.5)) / 0.5);
         let alpha = smooth(rt / 0.25) * (1.0 - fo);
         let sc = ease_out_elastic(rt / 1.0).max(0.01) * (1.0 - 0.1 * fo);
