@@ -1,0 +1,53 @@
+name: build-release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build (MSVC, embeds .exe icon via build.rs)
+        run: cargo build --release
+      - name: Package zip
+        shell: bash
+        run: packaging/make_windows_zip.sh target/release/tiktok-shrine-live.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TikTokShrineLive-Windows-x64
+          path: dist/TikTokShrineLive-Windows-x64.zip
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Build universal .app + .dmg
+        run: packaging/macos/make_app.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TikTokShrineLive-macOS-universal
+          path: dist/TikTokShrineLive-macOS-universal.dmg
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/**/*.zip
+            out/**/*.dmg

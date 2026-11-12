@@ -1,0 +1,8 @@
+/target
+/dist
+/bridge/node_modules
+/screenshots/raw
+*.zip
+.DS_Store
+config.local.toml
+/bridge/bridge.cjs

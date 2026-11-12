@@ -1,0 +1,25 @@
+[package]
+description = "TikTok LIVE shrine overlay: pray for lucky numbers / siamsi fortune sticks"
+license = "MIT"
+name = "tiktok-shrine-live"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "x11"] }
+egui = { version = "0.37", default-features = false, features = ["default_fonts"] }
+fastrand = "2.5.0"
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tiny_http = "0.12"
+toml = "1.2.1"
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+strip = true
