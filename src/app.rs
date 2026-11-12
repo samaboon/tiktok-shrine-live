@@ -304,7 +304,7 @@ impl ShrineApp {
         } else if th == Theme::Cat && !self.cfg.cat.gifts.is_empty() {
             &self.cfg.cat.gifts
         } else {
-            &self.cfg.gifts
+            &self.cfg.gifts.map
         };
         self.gift_rows = map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         self.gift_rows_theme = th;
@@ -1843,7 +1843,7 @@ impl ShrineApp {
     fn sync_edit_buffers(&mut self) {
         let map: std::collections::BTreeMap<String, String> = self.gift_rows.iter().filter(|(k, _)| !k.trim().is_empty()).map(|(k, v)| (k.trim().to_string(), v.clone())).collect();
         match self.gift_rows_theme {
-            Theme::Shrine => self.cfg.gifts = map,
+            Theme::Shrine => self.cfg.gifts.map = map,
             Theme::Krathong => self.cfg.krathong.gifts = map,
             Theme::Cat => self.cfg.cat.gifts = map,
         }
@@ -1868,7 +1868,7 @@ impl ShrineApp {
     // ------------------------------------------------------------------ settings window
     fn settings_ui(&mut self, ctx: &egui::Context) {
         let mut open = self.settings_open;
-        let vb = ViewportBuilder::default().with_title("ตั้งค่า - TikTok Shrine Live").with_inner_size([720.0, 900.0]).with_min_inner_size([480.0, 400.0]);
+        let vb = ViewportBuilder::default().with_title("ตั้งค่า - TikTok Shrine Live").with_inner_size([820.0, 1050.0]).with_min_inner_size([480.0, 400.0]);
         ctx.show_viewport_immediate(ViewportId::from_hash_of("settings"), vb, |ui, _class| {
             let ctx = &ui.ctx().clone();
             if ctx.input(|i| i.viewport().close_requested()) {
@@ -2111,7 +2111,17 @@ impl ShrineApp {
             ui.label("โหมดให้อาหารแมวมีตารางของตัวเอง (ถ้าว่างจะใช้ตารางของโหมดไหว้พระ)");
         }
         ui.label("เลือกจากรายการด้านล่าง (รูป ชื่อ รหัส ราคาเพชร) หรือพิมพ์ชื่อภาษาอังกฤษ / เลข gift id ในตาราง");
-        let gp_changed = self.gift_picker.ui(ui, th, &mut self.gift_rows, &self.bridge);
+        let src = self.cfg.gifts.thb_rate_source.clone();
+        let date = self.cfg.gifts.thb_rate_date.clone();
+        let gp_changed = self.gift_picker.ui(
+            ui,
+            th,
+            &mut self.gift_rows,
+            &self.bridge,
+            &mut self.cfg.gifts.thb_per_coin,
+            &src,
+            &date,
+        );
         let _ = gp_changed;
         let mut remove = None;
         egui::Grid::new("gifts").num_columns(3).striped(true).spacing([10.0, 8.0]).show(ui, |ui| {

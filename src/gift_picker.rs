@@ -1,7 +1,9 @@
 //! Settings UI: searchable TikTok gift (sticker) picker with images, IDs, and diamond prices.
 use crate::app::Theme;
 use crate::events::{request_gift_list, BridgeCtl};
-use crate::gifts::{cache_dir, upsert_mapping, GiftCatalog, GiftInfo, IconFetcher, IconReady};
+use crate::gifts::{
+    cache_dir, format_thb_approx, upsert_mapping, GiftCatalog, GiftInfo, IconFetcher, IconReady,
+};
 use egui::{Color32, ColorImage, RichText, TextureHandle, TextureOptions, Ui, Vec2};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -117,6 +119,9 @@ impl GiftPicker {
         theme: Theme,
         rows: &mut Vec<(String, String)>,
         bridge: &BridgeCtl,
+        thb_per_coin: &mut f64,
+        thb_rate_source: &str,
+        thb_rate_date: &str,
     ) -> bool {
         self.drain_icons(ui.ctx());
         let mut changed = false;
@@ -176,10 +181,33 @@ impl GiftPicker {
         });
         let filtered = self.filtered();
         ui.label(format!(
-            "แสดง {} จาก {} รายการ  ·  ราคาเป็นเพชร (Diamonds) ตามที่ TikTok แจ้ง",
+            "แสดง {} จาก {} รายการ  ·  ราคาเพชรตามที่ TikTok แจ้ง  ·  บาทเป็นราคาโดยประมาณ",
             filtered.len(),
             self.catalog.gifts.len()
         ));
+        ui.horizontal(|ui| {
+            ui.label("อัตราโดยประมาณ");
+            let before = *thb_per_coin;
+            ui.add(
+                egui::DragValue::new(thb_per_coin)
+                    .speed(0.001)
+                    .range(0.0..=20.0)
+                    .fixed_decimals(6)
+                    .suffix(" บาท/เหรียญ"),
+            );
+            if (*thb_per_coin - before).abs() > f64::EPSILON {
+                changed = true;
+            }
+            if ui.button("ใช้ค่าเริ่มต้น").clicked() {
+                *thb_per_coin = crate::config::DEFAULT_THB_PER_COIN;
+                changed = true;
+            }
+        });
+        ui.label(
+            RichText::new(rate_caption(*thb_per_coin, thb_rate_source, thb_rate_date))
+                .size(14.0)
+                .color(Color32::from_gray(180)),
+        );
 
         let row_h = 56.0;
         let row_gap = 6.0;
@@ -192,7 +220,7 @@ impl GiftPicker {
             .max_height(max_h)
             .show(ui, |ui| {
                 egui::Grid::new("gift-grid")
-                    .num_columns(5)
+                    .num_columns(6)
                     .striped(true)
                     .spacing([8.0, 6.0])
                     .min_row_height(row_h)
@@ -201,6 +229,7 @@ impl GiftPicker {
                         ui.label(RichText::new("ชื่อ").strong());
                         ui.label(RichText::new("รหัส (gift id)").strong());
                         ui.label(RichText::new("เพชร").strong());
+                        ui.label(RichText::new("ราคา (บาท)").strong());
                         ui.label(RichText::new("การกระทำ").strong());
                         ui.end_row();
                         // take owned copies of the visible slice metadata to avoid borrow issues
@@ -219,6 +248,7 @@ impl GiftPicker {
                             ui.label(RichText::new(&g.name).size(16.0).strong());
                             ui.monospace(g.id.to_string());
                             ui.label(format!("{} เพชร", g.diamond_count));
+                            ui.label(format_thb_approx(g.diamond_count, *thb_per_coin));
                             let mut act = current_action(rows, g).unwrap_or_else(|| "—".into());
                             let before = act.clone();
                             action_combo(ui, ("pick", g.id), &mut act, theme, true);
@@ -266,6 +296,68 @@ fn action_combo(
                 ui.selectable_value(act, a.to_string(), th.action_label(a));
             }
         });
+}
+
+fn rate_caption(rate: f64, source: &str, date: &str) -> String {
+    if rate <= 0.0 {
+        return "ยังไม่ตั้งอัตราบาทต่อเหรียญ — คอลัมน์ราคา (บาท) จะไม่แสดงตัวเลข (ใส่ได้ด้านบน หรือใน config.toml ที่ [gifts] thb_per_coin)".into();
+    }
+    let date_th = format_rate_date(date);
+    let date_bit = if date_th.is_empty() {
+        String::new()
+    } else {
+        format!(" อัปเดต {date_th}")
+    };
+    let src = source.trim();
+    let src_bit = if src.is_empty() {
+        String::new()
+    } else {
+        format!("{src}{date_bit}")
+    };
+    let default = crate::config::DEFAULT_THB_PER_COIN;
+    if (rate - default).abs() < 1e-6 {
+        if src_bit.is_empty() {
+            format!("ราคาโดยประมาณ · ค่าเริ่มต้นจากแพ็กเกจเว็บ 30 เหรียญ = 11 บาท{date_bit} · ราคาในแอปสูงกว่าเว็บ")
+        } else {
+            format!("ราคาโดยประมาณ · {src_bit} · ราคาในแอป (App Store / Google Play) สูงกว่าเว็บ")
+        }
+    } else if src_bit.is_empty() {
+        format!("ราคาโดยประมาณจากอัตราที่ตั้งเอง ({rate:.4} บาท/เหรียญ)")
+    } else {
+        format!("ราคาโดยประมาณจากอัตราที่ตั้งเอง ({rate:.4} บาท/เหรียญ) · ค่าเริ่มต้นมาจาก {src_bit}")
+    }
+}
+
+fn format_rate_date(s: &str) -> String {
+    let s = s.trim();
+    // ISO YYYY-MM-DD -> Thai short date in Asia/Bangkok calendar date (already a date, no tz).
+    let mut p = s.split('-');
+    let (Some(y), Some(mo), Some(d)) = (p.next(), p.next(), p.next()) else {
+        return s.to_string();
+    };
+    let months = [
+        "",
+        "ม.ค.",
+        "ก.พ.",
+        "มี.ค.",
+        "เม.ย.",
+        "พ.ค.",
+        "มิ.ย.",
+        "ก.ค.",
+        "ส.ค.",
+        "ก.ย.",
+        "ต.ค.",
+        "พ.ย.",
+        "ธ.ค.",
+    ];
+    let mo: usize = mo.parse().unwrap_or(0);
+    let day: u32 = d.chars().take(2).collect::<String>().parse().unwrap_or(0);
+    let mon = months.get(mo).copied().unwrap_or("");
+    if mon.is_empty() || day == 0 {
+        s.to_string()
+    } else {
+        format!("{day} {mon} {y}")
+    }
 }
 
 fn source_caption(c: &GiftCatalog) -> String {

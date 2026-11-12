@@ -5,11 +5,20 @@ use std::path::{Path, PathBuf};
 
 pub const DEFAULT_CONFIG: &str = include_str!("../config.toml");
 
+/// Official TikTok *web* recharge package quoted by KTC: 30 coins = 11 THB.
+/// App-store prices are higher (same article: iOS 21 coins = 15 THB).
+/// Source last modified 2026-06-04 (JSON-LD); we could not load tiktok.com/coin
+/// from this environment (HTTP 403 / captcha).
+pub const DEFAULT_THB_PER_COIN: f64 = 11.0 / 30.0;
+pub const DEFAULT_THB_RATE_URL: &str = "https://www.ktc.co.th/article/knowledge/tips/top-up-tiktok-coins-via-credit-card";
+pub const DEFAULT_THB_RATE_DATE: &str = "2026-06-04";
+pub const DEFAULT_THB_RATE_SOURCE: &str = "แพ็กเกจเว็บทางการ TikTok 30 เหรียญ = 11 บาท ตามบทความ KTC — ราคาในแอปสูงกว่า (เช่น iOS 21 เหรียญ = 15 บาท)";
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
     pub tiktok: TikTokCfg,
-    pub gifts: BTreeMap<String, String>,
+    pub gifts: GiftsCfg,
     pub http: HttpCfg,
     pub window: WindowCfg,
     pub numbers: NumbersCfg,
@@ -20,6 +29,34 @@ pub struct Config {
     pub krathong: KrathongCfg,
     pub cat: CatCfg,
     pub update: UpdateCfg,
+}
+
+/// Gift-action map plus an optional baht-per-coin rate for the picker / docs.
+/// `thb_per_coin` lives in the same `[gifts]` table as the mappings
+/// (`[gifts] thb_per_coin = 0.3666…`). Set it to 0 to hide estimated THB prices.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct GiftsCfg {
+    /// Baht a Thai viewer pays per coin (diamond) on the official web recharge.
+    /// `0` = do not show a THB estimate.
+    pub thb_per_coin: f64,
+    /// Short citation shown in the settings UI (source + package used).
+    pub thb_rate_source: String,
+    /// ISO date (`YYYY-MM-DD`) of the cited source.
+    pub thb_rate_date: String,
+    /// gift name or numeric id -> "pray" | "siamsi" | "none"
+    #[serde(flatten)]
+    pub map: BTreeMap<String, String>,
+}
+impl Default for GiftsCfg {
+    fn default() -> Self {
+        Self {
+            thb_per_coin: DEFAULT_THB_PER_COIN,
+            thb_rate_source: DEFAULT_THB_RATE_SOURCE.into(),
+            thb_rate_date: DEFAULT_THB_RATE_DATE.into(),
+            map: BTreeMap::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -219,7 +256,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             tiktok: TikTokCfg::default(),
-            gifts: BTreeMap::new(),
+            gifts: GiftsCfg::default(),
             http: HttpCfg::default(),
             window: WindowCfg::default(),
             numbers: NumbersCfg::default(),
@@ -338,7 +375,7 @@ impl Config {
         } else if self.theme.mode == "cat" && !self.cat.gifts.is_empty() {
             &self.cat.gifts
         } else {
-            &self.gifts
+            &self.gifts.map
         };
         for (k, v) in map {
             let k = k.trim();
@@ -426,7 +463,7 @@ mod tests {
         c.window.layout = "full".into();
         c.theme.mode = "cat".into();
         c.tiers[2].min_diamonds = 222;
-        c.gifts.insert("Galaxy".into(), "siamsi".into());
+        c.gifts.map.insert("Galaxy".into(), "siamsi".into());
         c.krathong.blessings = vec!["ขอให้มีความสุข".into()];
         c.cat.thanks = vec!["เหมียว ๆ ขอบคุณนะ".into()];
         let dir = std::env::temp_dir().join(format!("tsl_test_{}", std::process::id()));
@@ -439,7 +476,7 @@ mod tests {
         assert_eq!(r.window.layout, "full");
         assert_eq!(r.theme.mode, "cat");
         assert_eq!(r.tiers[2].min_diamonds, 222);
-        assert_eq!(r.gifts.get("Galaxy").map(|s| s.as_str()), Some("siamsi"));
+        assert_eq!(r.gifts.map.get("Galaxy").map(|s| s.as_str()), Some("siamsi"));
         assert_eq!(r.krathong.blessings, vec!["ขอให้มีความสุข".to_string()]);
         assert_eq!(r.cat.thanks, vec!["เหมียว ๆ ขอบคุณนะ".to_string()]);
         assert_eq!(r.window_size(), (540.0, 960.0));

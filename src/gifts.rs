@@ -9,6 +9,51 @@ use std::time::Duration;
 /// Bundled snapshot shipped with the app (see `assets/gifts/catalog.json` for source + date).
 pub const BUNDLED_CATALOG_JSON: &str = include_str!("../assets/gifts/catalog.json");
 
+/// Approximate baht a Thai viewer pays for `diamonds` coins at `rate` baht/coin.
+/// `rate <= 0` means no estimate (returns `None`).
+pub fn thb_for_diamonds(diamonds: u64, rate: f64) -> Option<f64> {
+    if rate > 0.0 {
+        Some(diamonds as f64 * rate)
+    } else {
+        None
+    }
+}
+
+/// Format an approximate THB price, e.g. `≈ 0.37 บาท` or `≈ 16,499.63 บาท`.
+/// Exact integers (within 0.5 satang) drop the decimals. Returns `—` if no rate.
+pub fn format_thb_approx(diamonds: u64, rate: f64) -> String {
+    match thb_for_diamonds(diamonds, rate) {
+        Some(baht) => format!("≈ {}", format_baht(baht)),
+        None => "—".into(),
+    }
+}
+
+fn format_baht(baht: f64) -> String {
+    let satang = (baht * 100.0).round() as i64;
+    let sign = if satang < 0 { "-" } else { "" };
+    let satang = satang.unsigned_abs();
+    let whole = satang / 100;
+    let frac = satang % 100;
+    let grouped = group_thousands(whole);
+    if frac == 0 {
+        format!("{sign}{grouped} บาท")
+    } else {
+        format!("{sign}{grouped}.{frac:02} บาท")
+    }
+}
+
+fn group_thousands(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, ch) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out.chars().rev().collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GiftInfo {
     pub id: u64,
@@ -648,11 +693,12 @@ mod tests {
         };
         let mut rows: Vec<(String, String)> = c
             .gifts
+            .map
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         upsert_mapping(&mut rows, &g, "siamsi");
-        c.gifts = rows.into_iter().collect();
+        c.gifts.map = rows.into_iter().collect();
         let dir = std::env::temp_dir().join(format!("tsl_giftmap_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("config.toml");
@@ -662,8 +708,9 @@ mod tests {
         // id-only row also works
         assert_eq!(
             r.gifts
+                .map
                 .get("6369")
-                .or_else(|| r.gifts.get("Lion"))
+                .or_else(|| r.gifts.map.get("Lion"))
                 .map(|s| s.as_str()),
             Some("siamsi")
         );
@@ -678,7 +725,7 @@ mod tests {
             .expect("config.example.toml must parse");
         for (label, cfg) in [("config.toml", &builtin), ("config.example.toml", &example)] {
             let sections = [
-                ("[gifts]", &cfg.gifts),
+                ("[gifts]", &cfg.gifts.map),
                 ("[krathong.gifts]", &cfg.krathong.gifts),
                 ("[cat.gifts]", &cfg.cat.gifts),
             ];
@@ -700,5 +747,40 @@ mod tests {
         );
         assert!(cat.find_by_key("Hand Hearts").is_none());
         assert!(cat.find_by_key("Universe").is_none());
+    }
+
+    #[test]
+    fn thb_estimate_from_verified_web_package() {
+        let rate = crate::config::DEFAULT_THB_PER_COIN;
+        assert!((rate - 11.0 / 30.0).abs() < 1e-12);
+        // The cited package itself must come out exact.
+        assert_eq!(format_thb_approx(30, rate), "≈ 11 บาท");
+        assert_eq!(format_thb_approx(1, rate), "≈ 0.37 บาท");
+        assert_eq!(format_thb_approx(5, rate), "≈ 1.83 บาท");
+        assert_eq!(format_thb_approx(100, rate), "≈ 36.67 บาท");
+        assert_eq!(format_thb_approx(1000, rate), "≈ 366.67 บาท");
+        assert_eq!(format_thb_approx(44999, rate), "≈ 16,499.63 บาท");
+        assert_eq!(format_thb_approx(30, 0.0), "—");
+    }
+
+    #[test]
+    fn builtin_config_keeps_verified_thb_rate_out_of_the_gift_map() {
+        let c = crate::config::Config::builtin();
+        assert!((c.gifts.thb_per_coin - crate::config::DEFAULT_THB_PER_COIN).abs() < 1e-9);
+        assert_eq!(c.gifts.thb_rate_date, crate::config::DEFAULT_THB_RATE_DATE);
+        assert!(!c.gifts.thb_rate_source.is_empty());
+        assert!(crate::config::DEFAULT_THB_RATE_URL.contains("ktc.co.th"));
+        assert!(!c.gifts.map.contains_key("thb_per_coin"));
+        assert!(!c.gifts.map.contains_key("thb_rate_source"));
+        assert!(!c.gifts.map.contains_key("thb_rate_date"));
+        // save + reload keeps the rate
+        let dir = std::env::temp_dir().join(format!("tsl_thb_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("config.toml");
+        c.save(&p).unwrap();
+        let r = crate::config::Config::load(&p);
+        assert!((r.gifts.thb_per_coin - crate::config::DEFAULT_THB_PER_COIN).abs() < 1e-9);
+        assert_eq!(r.gifts.thb_rate_date, crate::config::DEFAULT_THB_RATE_DATE);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
