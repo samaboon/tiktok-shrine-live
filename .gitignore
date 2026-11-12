@@ -6,3 +6,6 @@
 .DS_Store
 config.local.toml
 /bridge/bridge.cjs
+
+screenshots/**/raw/
+.bin/
