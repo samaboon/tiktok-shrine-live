@@ -6,7 +6,7 @@
 
 ![ตัวอย่างบนไลฟ์](screenshots/live_pray_t5.png) ![หลายคนต่อแถว](screenshots/live_multi_3senders.png) ![ตัวอย่างเซียมซี](screenshots/live_siamsi_t3.png) ![ลอยกระทง](screenshots/live_krathong_t5_bless.png)
 
-**ตัวอย่างแบบเคลื่อนไหว:** [ไหว้พระ ระดับ 5](previews/pray_t5.gif) · [เซียมซี ระดับ 5](previews/siamsi_t5.gif) · [ลอยกระทง ระดับ 5](previews/krathong_t5.gif) · [หลายคนต่อแถว](previews/multi_queue_4senders.gif) (มี .mp4 ด้วยในโฟลเดอร์ [`previews/`](previews/))
+**ตัวอย่างแบบเคลื่อนไหว:** [ไหว้พระ ระดับ 5](previews/pray_t5.gif) · [เซียมซี ระดับ 5](previews/siamsi_t5.gif) · [ลอยกระทง ระดับ 5](previews/krathong_t5.gif) · [หลายคนต่อแถว](previews/multi_queue_4senders.gif) · [หลายคนต่อแถว บนไลฟ์](previews/live_multi_3senders.gif) (มี .mp4 ด้วยในโฟลเดอร์ [`previews/`](previews/))
 
 ## มีอะไรใหม่ใน v0.2
 - **ตัวละครน่ารักแบบ chibi** หน้าตา/ทรงผม/สีเสื้อต่างกันตามชื่อผู้ชม · เดินแบบมีจังหวะ กระพริบตา หายใจ ผ้าคลุมพลิ้ว · ไหว้แบบ 3 จังหวะ (ยกมือ → ก้มกราบ → เงย)
