@@ -61,7 +61,7 @@ if python3 -c "from PIL import ImageGrab" 2>/dev/null; then
   sed -e 's/^x = .*/x = 1300/' -e 's/^check_on_start = .*/check_on_start = false/' config.toml > /tmp/_catshotcfg.toml
   "$BIN" --config /tmp/_catshotcfg.toml --shot-at 99999 --settings-tab 0 --theme cat >/dev/null 2>&1 & localP=$!
   sleep 3
-  python3 -c "from PIL import ImageGrab; ImageGrab.grab(xdisplay='$DISPLAY').crop((0,0,600,720)).save('$OUT/settings_tab0.png')" || true
+  python3 -c "from PIL import ImageGrab; ImageGrab.grab(xdisplay='$DISPLAY').crop((0,0,800,760)).save('$OUT/settings_tab0.png')" || true
   kill $localP 2>/dev/null; wait $localP 2>/dev/null
 fi
 

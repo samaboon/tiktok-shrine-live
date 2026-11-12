@@ -212,6 +212,13 @@ pub fn pick_asset(assets: &[Asset]) -> Option<Asset> {
     }
 }
 
+/// UI error text: first non-empty line only (full text goes to the log).
+pub fn one_line(e: &str) -> String {
+    let mut lines = e.lines().map(str::trim).filter(|l| !l.is_empty());
+    let first = lines.next().unwrap_or("").to_string();
+    if lines.next().is_some() { format!("{first} (รายละเอียดใน log)") } else { first }
+}
+
 fn run(cmd: &mut Command, what: &str) -> Result<(), String> {
     no_window(cmd);
     let out = cmd.stdin(Stdio::null()).output().map_err(|e| format!("{what}: {e}"))?;
@@ -577,7 +584,7 @@ impl Updater {
     fn fail(&self, e: String) {
         eprintln!("[update] ผิดพลาด: {e}");
         let mut s = self.st.lock().unwrap();
-        s.error = e;
+        s.error = one_line(&e);
         s.busy = false;
         s.progress = None;
     }
@@ -723,7 +730,10 @@ impl Updater {
                     s.bridge_msg = msg;
                     s.bridge_new_script = Some(script);
                 }
-                Err(e) => s.bridge_msg = e,
+                Err(e) => {
+                    eprintln!("[update] ตัวเชื่อม: {e}");
+                    s.bridge_msg = one_line(&e);
+                }
             }
             eprintln!("[update] ตัวเชื่อม: {}", s.bridge_msg);
         });
@@ -750,7 +760,8 @@ impl Updater {
                     c.arg("--check").arg(&tmp);
                     if let Err(e) = run(&mut c, "ตรวจตัวเชื่อม") {
                         let _ = std::fs::remove_file(&tmp);
-                        return Err(e);
+                        eprintln!("[update] ตรวจตัวเชื่อมที่ดาวน์โหลดไม่ผ่าน ({}):\n{e}", tmp.display());
+                        return Err("ไฟล์ตัวเชื่อมที่ดาวน์โหลดมาตรวจไม่ผ่าน (รายละเอียดใน log)".into());
                     }
                     let dest = bdir.join("bridge-update.cjs");
                     std::fs::rename(&tmp, &dest).map_err(|e| e.to_string())?;
@@ -899,6 +910,13 @@ mod tests {
         std::fs::set_permissions(&hang, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(selftest(&hang, std::time::Duration::from_secs(1)).is_err());
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn error_text_is_one_line() {
+        assert_eq!(one_line("a: b"), "a: b");
+        assert_eq!(one_line("x: /p/f.cjs:1\nthis is (\n ^^\nSyntaxError"), "x: /p/f.cjs:1 (รายละเอียดใน log)");
+        assert!(!one_line("a\n\nb").contains('\n'));
     }
 
     #[test]

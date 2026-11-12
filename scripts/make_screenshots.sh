@@ -65,12 +65,13 @@ setshot() { # name, args...
   local name=$1; shift
   "$BIN" --config /tmp/_shotcfg.toml --shot-at 99999 "$@" >/dev/null 2>&1 & local P=$!
   sleep 3
-  python3 -c "from PIL import ImageGrab; ImageGrab.grab(xdisplay='$DISPLAY').crop((0,0,600,720)).save('$OUT/$name.png')"
+  python3 -c "from PIL import ImageGrab; ImageGrab.grab(xdisplay='$DISPLAY').crop((0,0,800,760)).save('$OUT/$name.png')"
   kill $P 2>/dev/null; wait $P 2>/dev/null
 }
 for i in 0 1 2 3 4 5 6 7; do setshot settings_tab$i --settings-tab $i; done
 setshot settings_tab0_krathong --settings-tab 0 --theme krathong
 setshot settings_tab3_krathong --settings-tab 3 --theme krathong
+setshot settings_gift_picker --settings-tab 3
 setshot settings_tab0_stopped --settings-tab 0 --stopped
 [ -n "${XPID:-}" ] && kill $XPID
 echo done

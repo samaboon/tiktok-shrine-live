@@ -1,10 +1,10 @@
-# E2E results (2026-11-12 23:47 +07)
+# E2E results (2026-11-13 00:43 +07)
 
 68/68 passed
 
 | # | test | result | detail |
 |---|---|---|---|
-| 1 | app starts, /state responds | PASS | version 0.2.1 |
+| 1 | app starts, /state responds | PASS | version 0.2.2 |
 | 2 | GET /health | PASS |  |
 | 3 | update state: one-button fields (pending/runtime/connector) | PASS | {"pending": [], "runtime_current": null, "bridge_current": "2.5.0"} |
 | 4 | --which-node resolves a runtime (bundled/system) | PASS | system /usr/local/bin/node v24.22.1 |
@@ -44,21 +44,21 @@
 | 38 | 3 senders: line is single-file, no overlap (>=100 px apart, on screen) | PASS | x=[430.0, 285.0] |
 | 39 | emoji stripped from name label (no tofu) | PASS |  |
 | 40 | shrine result card matches action (pray -> lucky numbers, siamsi -> fortune) | PASS | Pray -> numbers |
-| 41 | 3 senders: line advances (2nd sender steps up, 3rd moves forward) | PASS | line=[{'user': 'ผู้ส่งC', 'x': 383.0}] |
+| 41 | 3 senders: line advances (2nd sender steps up, 3rd moves forward) | PASS | line=[{'user': 'ผู้ส่งC', 'x': 413.0}] |
 | 42 | 3 senders: each gets their own turn in order | PASS |  |
 | 43 | layout toggle full/top (window resizes) | PASS | [540.0, 960.0] vs [540.0, 480.0] |
 | 44 | background mode green | PASS |  |
 | 45 | background mode scene | PASS |  |
 | 46 | background mode transparent | PASS |  |
-| 47 | transparent idle: ground props hidden | PASS | props_alpha=0.0 |
+| 47 | transparent idle: ground props hidden | PASS | props_alpha=0.04313502088189125 |
 | 48 | transparent show: props fade in | PASS | props_alpha=1.0 |
 | 49 | runtime mode switch -> krathong | PASS |  |
 | 50 | krathong: krathong is released and keeps floating | PASS | floating=1 |
 | 51 | runtime mode switch -> cat (ให้อาหารแมว) | PASS |  |
-| 52 | cat: 3 senders -> front cat + 2 cats visible in line | PASS | current=แมวA line=[{'user': 'แมวB', 'x': -27.0}, {'user': 'แมวC', 'x': -27.0}] |
+| 52 | cat: 3 senders -> front cat + 2 cats visible in line | PASS | current=แมวA line=[{'user': 'แมวB', 'x': -26.0}, {'user': 'แมวC', 'x': -26.0}] |
 | 53 | cat: walk -> pour -> eat -> card phases | PASS | ['card', 'eat', 'leave', 'pour', 'walk'] |
 | 54 | cat: result is thank-you card only (no lucky numbers) | PASS | {'thanks'} |
-| 55 | cat: line advances to next sender | PASS | line=[{'user': 'แมวC', 'x': 414.0}] |
+| 55 | cat: line advances to next sender | PASS | line=[{'user': 'แมวC', 'x': 406.0}] |
 | 56 | runtime mode switch -> shrine | PASS |  |
 | 57 | click-through on/off via /control | PASS |  |
 | 58 | stop: gifts ignored while stopped | PASS |  |
