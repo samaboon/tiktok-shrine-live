@@ -12,38 +12,75 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Build (MSVC, embeds .exe icon via build.rs)
         run: cargo build --release
+      - name: Test
+        run: cargo test --release
       - name: Package zip
         shell: bash
         run: packaging/make_windows_zip.sh target/release/tiktok-shrine-live.exe
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: TikTokShrineLive-Windows-x64
           path: dist/TikTokShrineLive-Windows-x64.zip
 
   macos:
-    runs-on: macos-14
+    # macos-14 image config is no longer accepted -> use the current Apple-silicon image
+    runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
-      - name: Build universal .app + .dmg
+      - name: Build universal .app + .dmg + .zip
         run: packaging/macos/make_app.sh
-      - uses: actions/upload-artifact@v4
+      - name: Verify bundle
+        run: |
+          file "dist/TikTok Shrine Live.app/Contents/MacOS/tiktok-shrine-live"
+          lipo -info "dist/TikTok Shrine Live.app/Contents/MacOS/tiktok-shrine-live"
+          plutil -lint "dist/TikTok Shrine Live.app/Contents/Info.plist"
+      - uses: actions/upload-artifact@v5
         with:
           name: TikTokShrineLive-macOS-universal
-          path: dist/TikTokShrineLive-macOS-universal.dmg
+          path: |
+            dist/TikTokShrineLive-macOS-universal.dmg
+            dist/TikTokShrineLive-macOS-universal.zip
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release && cargo test --release
+      - name: Package tar.gz
+        run: |
+          mkdir -p dist/pkg && cp target/release/tiktok-shrine-live config.toml docs/คู่มือ.md dist/pkg/
+          tar -czf dist/TikTokShrineLive-Linux-x64.tar.gz -C dist/pkg .
+      - uses: actions/upload-artifact@v5
+        with:
+          name: TikTokShrineLive-Linux-x64
+          path: dist/TikTokShrineLive-Linux-x64.tar.gz
+
+  bridge:
+    # the TikTok connector bundle, so the app can update only the bridge ("อัปเดตตัวเชื่อม TikTok")
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/upload-artifact@v5
+        with:
+          name: bridge
+          path: |
+            bridge/dist/bridge.cjs
+            bridge/dist/bridge-version.json
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [windows, macos]
+    needs: [windows, macos, linux, bridge]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: out
       - uses: softprops/action-gh-release@v2
@@ -51,3 +88,6 @@ jobs:
           files: |
             out/**/*.zip
             out/**/*.dmg
+            out/**/*.tar.gz
+            out/bridge/bridge.cjs
+            out/bridge/bridge-version.json

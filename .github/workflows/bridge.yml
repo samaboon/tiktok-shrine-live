@@ -1,0 +1,36 @@
+name: bridge-latest
+
+# Rebuilds the TikTok bridge bundle with the newest tiktok-live-connector and publishes it to the
+# rolling "bridge-latest" release. The app's "อัปเดตตัวเชื่อม TikTok" button downloads it from there,
+# so a TikTok-side change can be fixed without a new app release.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Bundle newest connector
+        working-directory: bridge
+        run: |
+          npm install --no-audit --no-fund
+          npm install --no-audit --no-fund tiktok-live-connector@latest
+          npx esbuild bridge.js --bundle --platform=node --target=node18 --format=cjs --minify --outfile=dist/bridge.cjs
+          V=$(node -p "require('./node_modules/tiktok-live-connector/package.json').version")
+          echo "{\"connector\":\"$V\"}" > dist/bridge-version.json
+          cat dist/bridge-version.json
+      - name: Publish to bridge-latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view bridge-latest >/dev/null 2>&1 || gh release create bridge-latest --prerelease --title "TikTok bridge (latest)" --notes "ตัวเชื่อม TikTok รุ่นล่าสุด สำหรับปุ่ม 'อัปเดตตัวเชื่อม TikTok' ในแอป"
+          gh release upload bridge-latest bridge/dist/bridge.cjs bridge/dist/bridge-version.json --clobber

@@ -11,6 +11,8 @@ cp config.example.toml "$OUT/config.toml"
 cp assets/sprites/README.txt "$OUT/assets/sprites/" 2>/dev/null || true
 cp docs/คู่มือ.md "$OUT/คู่มือ.md"
 cp assets/fonts/OFL.txt "$OUT/FONT-LICENSE-OFL.txt"
+cp LICENSE "$OUT/LICENSE.txt"
+cp NOTICE.md "$OUT/NOTICE.md"
 printf 'ดับเบิลคลิก TikTokShrineLive.exe เพื่อเริ่ม\r\nอ่านวิธีใช้ทั้งหมดใน คู่มือ.md\r\n' > "$OUT/อ่านก่อน.txt"
 (cd dist && rm -f TikTokShrineLive-Windows-x64.zip && \
   if command -v zip >/dev/null; then zip -qr TikTokShrineLive-Windows-x64.zip TikTokShrineLive; \

@@ -54,6 +54,8 @@ pub enum ControlCmd {
     Theme(String),
     Save,
     Reload,
+    /// "check" | "apply" | "bridge"
+    Update(String),
 }
 
 #[derive(Debug, Clone)]
@@ -294,6 +296,10 @@ impl EventSource for HttpSource {
                         if get_str(&v, &["reload"]).is_some() {
                             sink.send(Incoming::Control(ControlCmd::Reload));
                             done.push("reload");
+                        }
+                        if let Some(u) = get_str(&v, &["update"]) {
+                            sink.send(Incoming::Control(ControlCmd::Update(u)));
+                            done.push("update");
                         }
                         (200, format!("ok {:?}", done))
                     }

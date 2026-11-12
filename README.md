@@ -127,4 +127,4 @@ scripts/make_screenshots.sh && python3 scripts/make_composites.py
 **CI**: `.github/workflows/release.yml` — build Windows (.exe มี icon, zip) และ macOS (universal .app + .dmg) บน runner จริง; push tag `v*` แล้วจะแนบไฟล์ใน GitHub Release
 
 ## License
-โค้ด: MIT · ฟอนต์ Noto Sans / Noto Sans Thai: SIL OFL 1.1 (`assets/fonts/OFL.txt`) · bridge ใช้ `tiktok-live-connector` (AGPL-3.0) — ถ้าเผยแพร่ไฟล์ bridge.cjs ต่อ ต้องเปิดซอร์สตามเงื่อนไข AGPL
+โค้ดทั้งหมด: **AGPL-3.0-only** (`LICENSE`) เพราะฝัง [`tiktok-live-connector`](https://github.com/zerodytrash/TikTok-Live-Connector) (AGPL-3.0) ไว้ในตัวโปรแกรม · ฟอนต์ Noto Sans / Noto Sans Thai: SIL OFL 1.1 (`assets/fonts/OFL.txt`) · รายละเอียดผู้มีส่วนร่วมดู `NOTICE.md`

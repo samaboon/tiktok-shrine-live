@@ -330,6 +330,11 @@ impl ShrineApp {
                 }
                 ControlCmd::Save => self.save_config(ctx),
                 ControlCmd::Reload => self.reload_config(),
+                ControlCmd::Update(u) => match u.as_str() {
+                    "apply" => self.updater.apply(),
+                    "bridge" => self.updater.update_bridge(self.cfg.tiktok.node_command.clone()),
+                    _ => self.updater.check(),
+                },
             },
             Incoming::Direct(DirectIn { action, user, diamonds, .. }) => {
                 self.gifts_received += 1;
@@ -1990,7 +1995,16 @@ impl ShrineApp {
             // stop the bridge child so the new instance can take over
             restart_bridge(&self.bridge, "", "", &self.cfg.tiktok.node_command, false);
             let mut c = std::process::Command::new(&exe);
-            c.args(std::env::args().skip(1).filter(|a| a != "--fake-version"));
+            let mut args = vec![];
+            let mut it = std::env::args().skip(1);
+            while let Some(a) = it.next() {
+                if a == "--fake-version" {
+                    it.next();
+                } else {
+                    args.push(a);
+                }
+            }
+            c.args(args);
             match c.spawn() {
                 Ok(_) => {
                     eprintln!("[update] เปิดเวอร์ชันใหม่ {}", exe.display());
