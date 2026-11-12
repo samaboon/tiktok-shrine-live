@@ -1,6 +1,6 @@
-# E2E results (2026-11-12 21:42 +07)
+# E2E results (2026-11-12 22:12 +07)
 
-52/52 passed
+57/57 passed
 
 | # | test | result | detail |
 |---|---|---|---|
@@ -37,22 +37,27 @@
 | 31 | 5 tier thresholds incl. diamonds x repeat (0/10/100/1000/10000) | PASS | 1x1->1, 9x1->1, 10x1->2, 99x1->2, 100x1->3, 999x1->3, 1000x1->4, 9999x1->4, 10000x1->5, 1x10->2, 5x20->3, 1x1000->4, 500x20->5 |
 | 32 | combo streak (repeat=5) plays once with summed value (max_plays_per_gift=1) | PASS | [{'action': 'Pray', 'tier': 1, 'user': 'combo'}] |
 | 33 | 10 rapid gifts all queued in order | PASS | queue_len=10 ['fan0', 'fan1', 'fan2', 'fan3', 'fan4', 'fan5', 'fan6', 'fan7', 'fan8', 'fan9'] |
-| 34 | layout toggle full/top (window resizes) | PASS | [540.0, 960.0] vs [540.0, 480.0] |
-| 35 | background mode green | PASS |  |
-| 36 | background mode scene | PASS |  |
-| 37 | background mode transparent | PASS |  |
-| 38 | runtime mode switch -> krathong | PASS |  |
-| 39 | krathong: krathong is released and keeps floating | PASS | floating=1 |
-| 40 | runtime mode switch -> shrine | PASS |  |
-| 41 | click-through on/off via /control | PASS |  |
-| 42 | stop: gifts ignored while stopped | PASS |  |
-| 43 | start: gifts accepted again | PASS |  |
-| 44 | idle=hidden: scene fades fully transparent when idle | PASS | alpha=0.00 |
-| 45 | idle=hidden: gift fades the scene back in and plays | PASS |  |
-| 46 | idle=ambient: subtle motion keeps running | PASS |  |
-| 47 | idle=still: back to frozen still picture | PASS |  |
-| 48 | save writes config.toml | PASS |  |
-| 49 | reload picks up edited config.toml | PASS |  |
-| 50 | saved config keeps Thai text (UTF-8) | PASS |  |
-| 51 | Ctrl+Q quits | PASS |  |
-| 52 | no panic in log | PASS |  |
+| 34 | 3 senders: front one plays, other two visible in line | PASS | current=ผู้ส่งA line=[{'user': 'ผู้ส่งB', 'x': 430.0}, {'user': 'ผู้ส่งC', 'x': 285.0}] |
+| 35 | 3 senders: line is single-file, no overlap (>=100 px apart, on screen) | PASS | x=[430.0, 285.0] |
+| 36 | emoji stripped from name label (no tofu) | PASS |  |
+| 37 | 3 senders: line advances (2nd sender steps up, 3rd moves forward) | PASS | line=[{'user': 'ผู้ส่งC', 'x': 336.0}] |
+| 38 | 3 senders: each gets their own turn in order | PASS |  |
+| 39 | layout toggle full/top (window resizes) | PASS | [540.0, 960.0] vs [540.0, 480.0] |
+| 40 | background mode green | PASS |  |
+| 41 | background mode scene | PASS |  |
+| 42 | background mode transparent | PASS |  |
+| 43 | runtime mode switch -> krathong | PASS |  |
+| 44 | krathong: krathong is released and keeps floating | PASS | floating=1 |
+| 45 | runtime mode switch -> shrine | PASS |  |
+| 46 | click-through on/off via /control | PASS |  |
+| 47 | stop: gifts ignored while stopped | PASS |  |
+| 48 | start: gifts accepted again | PASS |  |
+| 49 | idle=hidden: scene fades fully transparent when idle | PASS | alpha=0.00 |
+| 50 | idle=hidden: gift fades the scene back in and plays | PASS |  |
+| 51 | idle=ambient: subtle motion keeps running | PASS |  |
+| 52 | idle=still: back to frozen still picture | PASS |  |
+| 53 | save writes config.toml | PASS |  |
+| 54 | reload picks up edited config.toml | PASS |  |
+| 55 | saved config keeps Thai text (UTF-8) | PASS |  |
+| 56 | Ctrl+Q quits | PASS |  |
+| 57 | no panic in log | PASS |  |

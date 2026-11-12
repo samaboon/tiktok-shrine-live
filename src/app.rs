@@ -57,6 +57,8 @@ pub struct Appearance {
     pub hair: Color32,
     pub style: u8,
     pub seed: f32,
+    /// strong colour of the same hue as the shirt: name tag on result cards + marker under the name label
+    pub tag: Color32,
 }
 
 pub struct Show {
@@ -78,6 +80,13 @@ pub struct Show {
     digit_done: Vec<Vec<bool>>,
     stick: Option<StickPhys>,
     released: bool,
+    /// waiting-line state: x on screen (None = still off-screen), walk phase, walk amount, time visible
+    qx: Option<f32>,
+    qphase: f32,
+    qmove: f32,
+    qage: f32,
+    /// where the walk-in to the shrine starts (front of the line, or off-screen)
+    start_x: f32,
 }
 
 pub struct Floating {
@@ -133,6 +142,8 @@ pub struct ShrineApp {
     scene_alpha: f32,
     gap: f32,
     shake: f32,
+    /// where the active character's name label was drawn (for the result card pointer)
+    banner_at: std::cell::Cell<(f32, f32)>,
     status: String,
     pub running: bool,
     settings_open: bool,
@@ -211,6 +222,7 @@ impl ShrineApp {
             idle_for: 10.0,
             scene_alpha: 0.0,
             gap: 0.0,
+            banner_at: std::cell::Cell::new((PRAY_X, 300.0)),
             shake: 0.0,
             status: String::new(),
             running: !init.start_stopped,
@@ -282,7 +294,8 @@ impl ShrineApp {
         let list = if theme == Theme::Krathong { self.cfg.krathong.blessings.clone() } else { self.cfg.siamsi.fortunes.clone() };
         let pick = self.rng.usize(0..list.len().max(1));
         let text = list.get(pick).cloned().unwrap_or_default();
-        let user = if user.trim().is_empty() { "ผู้ชม".to_string() } else { truncate(user.trim(), 18) };
+        let clean = display_name(user);
+        let user = if clean.is_empty() { "ผู้ชม".to_string() } else { truncate(&clean, 18) };
         let look = appearance_for(&user);
         let bursts = burst_plan(tier, &mut self.rng);
         let vh = self.vh();
@@ -308,6 +321,11 @@ impl ShrineApp {
             digit_done,
             stick: None,
             released: false,
+            qx: None,
+            qphase: 0.0,
+            qmove: 0.0,
+            qage: 0.0,
+            start_x: -150.0,
         });
     }
 
@@ -429,7 +447,8 @@ impl ShrineApp {
             if self.gap > 0.0 {
                 self.gap -= dt;
             } else if !self.queue.is_empty() && (idle_mode != "hidden" || self.scene_alpha > 0.95) {
-                let s = self.queue.pop_front().unwrap();
+                let mut s = self.queue.pop_front().unwrap();
+                s.start_x = s.qx.unwrap_or(-150.0);
                 self.shows_started += 1;
                 self.current = Some(s);
                 self.entry_poof();
@@ -448,6 +467,7 @@ impl ShrineApp {
             }
         }
 
+        self.step_line(dt);
         let theme = self.theme();
         if active || idle_mode == "ambient" {
             self.spawn_ambient(dt, theme);
@@ -664,8 +684,84 @@ impl ShrineApp {
         }
     }
 
+    /// x of waiting-line slot k (0 = right behind the one at the shrine); None if it would be off-screen
+    fn line_slot(&self, th: Theme, k: usize) -> Option<f32> {
+        let tx = Self::target_x(th);
+        let big = self.current.as_ref().map(|c| c.tier >= 4 && c.theme == th).unwrap_or(false);
+        let (first, gap, min_x) = match th {
+            Theme::Shrine => (tx - if big { 330.0 } else { 180.0 }, 145.0, 60.0),
+            Theme::Krathong => (tx - if big { 250.0 } else { 125.0 }, 118.0, 45.0),
+        };
+        let x = first - gap * k as f32;
+        (x >= min_x).then_some(x)
+    }
+
+    /// the visible queue: the next senders walk out and stand in a single-file line behind the active one
+    fn step_line(&mut self, dt: f32) {
+        let th = self.theme();
+        let max_vis = self.cfg.window.max_visible.clamp(1, 12);
+        let room = max_vis.saturating_sub(if self.current.is_some() { 1 } else { 0 });
+        let slots: Vec<Option<f32>> = (0..self.queue.len()).map(|k| if k < room { self.line_slot(th, k) } else { None }).collect();
+        let mut prev_x = f32::INFINITY;
+        for (k, s) in self.queue.iter_mut().enumerate() {
+            let Some(target) = slots[k] else {
+                // not enough room: anyone already out keeps their place, the rest wait off-screen
+                if let Some(x) = s.qx { prev_x = x; }
+                continue;
+            };
+            let x = s.qx.get_or_insert(-150.0 - 40.0 * k as f32);
+            s.qage += dt;
+            // walk toward the slot, never into the person ahead
+            let goal = target.min(prev_x - 130.0);
+            let step = (goal - *x).clamp(-240.0 * dt, 240.0 * dt);
+            *x += step;
+            let moving = step.abs() > 0.5 * 240.0 * dt;
+            s.qmove += ((if moving { 1.0 } else { 0.0 }) - s.qmove) * (1.0 - (-10.0 * dt).exp());
+            s.qphase += step.abs() * std::f32::consts::TAU / 95.0;
+            prev_x = *x;
+        }
+    }
+
+    fn draw_line(&self, cx: &Cx, sprites: &Sprites) {
+        let th = self.theme();
+        let k = Self::char_scale(th);
+        // back of the line first so nearer ones overlap correctly
+        let mut v: Vec<(usize, &Show)> = self.queue.iter().enumerate().filter(|(_, s)| s.qx.map(|x| x > -120.0).unwrap_or(false)).collect();
+        v.reverse();
+        for (idx, s) in v {
+            let x = s.qx.unwrap();
+            let mut p = Pose::default();
+            let st = self.scene_time;
+            p.breath = (st * 2.4 + s.look.seed).sin();
+            p.blink = blink(st, s.look.seed);
+            p.walk = s.qmove.clamp(0.0, 1.0);
+            p.phase = s.qphase;
+            p.squash = -0.6 * p.walk * (2.0 * p.phase).sin().abs() + 0.25 * p.walk;
+            p.cape_lag = 18.0 * p.walk;
+            p.expr = if s.qmove < 0.2 && (st * 0.7 + s.look.seed).sin() > 0.6 { 1 } else { 0 };
+            if th == Theme::Krathong {
+                p.hands = 1.0;
+                p.carry = 1.0;
+            }
+            let look = Look { tier: s.tier, shirt: s.look.shirt, pants: s.look.pants, scale: k, hair: s.look.hair, style: s.look.style };
+            let rig = draw_character(cx, sprites, x, &p, &look);
+            if th == Theme::Krathong {
+                let hd = rig.arms[1].1;
+                kr::draw_krathong(cx, hd.0 + 6.0, hd.1 + 4.0, 0.62, s.tier, s.look.seed, None, 1.0);
+            }
+            let head_top = rig.head.1 - HEAD_R * k * 1.05 - if s.tier >= 3 { 70.0 * k } else { 8.0 };
+            let lift = if idx % 2 == 1 { 44.0 } else { 0.0 };
+            if lift > 0.0 {
+                cx.seg((x, head_top + 2.0), (x, head_top - lift), 2.0, rgba(255, 255, 255, 0.7));
+            }
+            let short = truncate(&s.user, 9);
+            draw_name_banner(cx, x, head_top - lift, &short, s.tier.min(2), "", s.qage / 0.9, 1.0);
+            tag_pointer(cx, x, head_top - lift, s.look.tag, 1.0);
+        }
+    }
+
     fn walk_x(&self, s: &Show) -> f32 {
-        lerp(-150.0, Self::target_x(s.theme), smooth(s.t / WALK))
+        lerp(s.start_x, Self::target_x(s.theme), smooth(s.t / WALK))
     }
 
     /// Character position + pose for the current show time.
@@ -680,10 +776,10 @@ impl ShrineApp {
         let x;
         if t < w {
             let u = t / w;
-            x = lerp(-150.0, tx, smooth(u));
-            let spd = 6.0 * u * (1.0 - u);
+            x = lerp(s.start_x, tx, smooth(u));
+            let spd = 6.0 * u * (1.0 - u) * ((tx - s.start_x) / (tx + 150.0)).clamp(0.25, 1.0).sqrt();
             p.walk = (spd * 1.25).clamp(0.0, 1.0);
-            p.phase = (x + 150.0) * std::f32::consts::TAU / 95.0;
+            p.phase = (x - s.start_x) * std::f32::consts::TAU / 95.0 + s.qphase;
             p.squash = -0.6 * p.walk * (2.0 * p.phase).sin().abs() + 0.25 * p.walk;
             p.cape_lag = 18.0 * p.walk;
             if s.theme == Theme::Krathong {
@@ -1065,9 +1161,7 @@ impl ShrineApp {
             }
         }
         draw_shrine(cx, sprites, shrine_glow, cyl_on_altar);
-        if let Some(s) = &self.current {
-            self.draw_actor(cx, sprites, s);
-        }
+        self.draw_current_and_line(cx, sprites);
         draw_foreground_flowers(cx);
     }
 
@@ -1089,10 +1183,23 @@ impl ShrineApp {
             kr::draw_krathong(cx, f.x, f.y + bob, sc, f.tier, f.seed, Some(&f.name), alpha);
         }
         kr::draw_bank(cx);
-        if let Some(s) = &self.current {
-            self.draw_actor(cx, sprites, s);
-        }
+        self.draw_current_and_line(cx, sprites);
         kr::draw_foreground(cx);
+    }
+
+    /// the active character + the waiting line; a character walking away passes behind the line
+    fn draw_current_and_line(&self, cx: &Cx, sprites: &Sprites) {
+        let leaving = self.current.as_ref().map(|s| {
+            let (w, a, r, _) = self.durations(s);
+            s.t > w + a + r
+        });
+        if leaving == Some(true) {
+            self.draw_actor(cx, sprites, self.current.as_ref().unwrap());
+        }
+        self.draw_line(cx, sprites);
+        if leaving == Some(false) {
+            self.draw_actor(cx, sprites, self.current.as_ref().unwrap());
+        }
     }
 
     fn draw_actor(&self, cx: &Cx, sprites: &Sprites, s: &Show) {
@@ -1148,7 +1255,9 @@ impl ShrineApp {
         let head_top = rig.head.1 - HEAD_R * k * 1.05 - if s.tier >= 3 { 70.0 * k } else { 8.0 };
         let total = w + a_d + r + o;
         let alpha = 1.0 - smooth((s.t - (total - 0.6)) / 0.6);
-        draw_name_banner(cx, x, head_top, &s.user, s.tier, if s.tier >= 2 { &s.tier_name } else { "" }, s.t / 0.9, alpha);
+        draw_name_banner(cx, x, head_top, &s.user, s.tier, if s.tier >= 2 { &s.tier_name } else { "" }, if s.start_x > -149.0 { 1.0 } else { s.t / 0.9 }, alpha);
+        tag_pointer(cx, x, head_top, s.look.tag, alpha);
+        self.banner_at.set((x, head_top));
     }
 
     fn pray_geo(&self, s: &Show) -> PrayGeo {
@@ -1207,6 +1316,7 @@ impl ShrineApp {
         }
         let title = format!("{} ของ {}", self.cfg.numbers.title, s.user);
         cx.text_o(geo.cxx, top + 55.0, Align2::CENTER_CENTER, &title, 38.0, with_a(GOLD, alpha), rgba(60, 0, 0, alpha), true);
+        self.owner_tag(cx, s, x0, x1, top, top + geo.hgt, alpha);
         for (i, (label, num)) in s.numbers.iter().enumerate() {
             let y = geo.row_y[i] + yoff;
             cx.text(x0 + 46.0, y, Align2::LEFT_CENTER, label, 32.0, rgba(255, 235, 200, alpha), true);
@@ -1281,6 +1391,7 @@ impl ShrineApp {
         };
         rod(top);
         rod(top + h);
+        self.owner_tag(cx, s, x0, x1, top, top + h + 11.0, alpha);
     }
 
     fn draw_blessing(&self, cx: &Cx, s: &Show, rt: f32, r: f32) {
@@ -1305,6 +1416,7 @@ impl ShrineApp {
         kr::draw_krathong(cx, x0 + 64.0, top + 74.0, 0.5, tier, s.look.seed, None, ca);
         cx.text_o(cxx + 20.0, top + 62.0, Align2::CENTER_CENTER, &format!("{} {}", self.cfg.krathong.wish_title, s.user), 36.0, with_a(GOLD, ca), rgba(10, 10, 40, ca), true);
         cx.seg((x0 + 70.0, top + 112.0), (x1 - 70.0, top + 112.0), 2.0, with_a(GOLD, ca * 0.8));
+        self.owner_tag(cx, s, x0, x1, top, top + h2, ca);
         let ta = alpha * smooth((rt - 0.7) / 0.5);
         cx.text_wrapped(cxx, top + 140.0 + (1.0 - smooth((rt - 0.7) / 0.5)) * 14.0, &s.text, 38.0, w2 - 110.0, rgba(255, 245, 220, ta), true);
         for i in 0..10 {
@@ -1312,6 +1424,41 @@ impl ShrineApp {
             let tw = (cx.time * 3.0 + i as f32 * 1.7).sin().abs();
             sparkle(cx, cxx + a.cos() * (w2 / 2.0 + 10.0), top + h2 / 2.0 + a.sin() * (h2 / 2.0 + 10.0), 9.0 * tw, rgba(255, 240, 200, ca));
         }
+    }
+
+    /// whose result is this: a name tab in the sender's colour on the card + a dotted pointer down to their name label
+    fn owner_tag(&self, cx: &Cx, s: &Show, x0: f32, x1: f32, top: f32, bottom: f32, alpha: f32) {
+        if alpha <= 0.02 {
+            return;
+        }
+        let col = s.look.tag;
+        let (bx, by) = self.banner_at.get();
+        // pointer from the card's bottom edge to just above the character's name label
+        let sx = bx.clamp(x0 + 40.0, x1 - 40.0);
+        let (ax, ay) = (sx, bottom + 6.0);
+        let (ex, ey) = (bx, by - 62.0);
+        if ey > ay + 20.0 {
+            let n = (((ex - ax).hypot(ey - ay)) / 16.0) as usize;
+            for i in 0..n {
+                if i % 2 == 0 {
+                    let (u0, u1) = (i as f32 / n as f32, (i as f32 + 1.0) / n as f32);
+                    cx.seg((lerp(ax, ex, u0), lerp(ay, ey, u0)), (lerp(ax, ex, u1), lerp(ay, ey, u1)), 4.0, rgba(255, 255, 255, 0.85 * alpha));
+                }
+            }
+            cx.circle(ex, ey, 7.0, rgba(255, 255, 255, 0.9 * alpha));
+            cx.circle(ex, ey, 4.5, with_a(col, alpha));
+        }
+        // name tab hanging off the card's top-left corner
+        let name = truncate(&s.user, 16);
+        let size = 24.0;
+        let m = cx.measure(&name, size, true);
+        let (tx0, ty0) = (x0 + 26.0, top - 20.0);
+        let (tx1, ty1) = (tx0 + m.x + 54.0, top + 16.0);
+        cx.rect(tx0 + 3.0, ty0 + 4.0, tx1 + 3.0, ty1 + 4.0, 18.0, rgba(0, 0, 0, 0.35 * alpha));
+        cx.rect(tx0, ty0, tx1, ty1, 18.0, with_a(col, alpha));
+        cx.rect_line(tx0, ty0, tx1, ty1, 18.0, 2.5, rgba(255, 255, 255, 0.95 * alpha));
+        cx.circle(tx0 + 20.0, (ty0 + ty1) / 2.0, 7.0, rgba(255, 255, 255, 0.95 * alpha));
+        cx.text_o(tx0 + 34.0, (ty0 + ty1) / 2.0, Align2::LEFT_CENTER, &name, size, rgba(255, 255, 255, alpha), rgba(0, 0, 0, 0.85 * alpha), true);
     }
 
     fn draw_hud(&self, cx: &Cx) {
@@ -1365,6 +1512,7 @@ impl ShrineApp {
             "current": cur,
             "queue": queued,
             "queue_len": self.queue.len(),
+            "line": self.queue.iter().filter_map(|s| s.qx.map(|x| serde_json::json!({"user": s.user, "x": x.round()}))).collect::<Vec<_>>(),
             "floating": self.floating.len(),
             "particles": self.particles.len(),
             "shows_started": self.shows_started,
@@ -1431,6 +1579,7 @@ pub fn appearance_for(name: &str) -> Appearance {
         hair: hairs[((h >> 12) % hairs.len() as u64) as usize],
         style: ((h >> 20) % 4) as u8,
         seed: ((h >> 28) % 1000) as f32 / 100.0,
+        tag: hsv(hue, 0.85, 0.78),
     }
 }
 
@@ -2200,4 +2349,45 @@ pub fn save_png(img: &egui::ColorImage, out: &std::path::Path, preview: bool) {
         let _ = p.save(out.with_file_name(format!("{stem}_checker.png")));
     }
     eprintln!("[shot] saved {}", out.display());
+}
+
+/// small down-pointing marker in the sender's colour under a name label (matches the colour tag on their result card)
+fn tag_pointer(cx: &Cx, x: f32, y: f32, c: Color32, alpha: f32) {
+    if alpha <= 0.01 {
+        return;
+    }
+    let c = with_a(c, alpha);
+    cx.poly(&[(x - 11.0, y + 1.0), (x + 11.0, y + 1.0), (x, y + 15.0)], rgba(255, 255, 255, 0.9 * alpha));
+    cx.poly(&[(x - 7.0, y + 2.5), (x + 7.0, y + 2.5), (x, y + 11.5)], c);
+}
+
+/// TikTok nicknames often carry emoji / decorative symbols the bundled fonts can't draw (they'd show as tofu boxes):
+/// drop those, strip control chars and collapse whitespace. Thai, Latin, digits and common punctuation stay.
+pub fn display_name(raw: &str) -> String {
+    let keep = |c: char| {
+        let u = c as u32;
+        !(c.is_control()
+            || (0x1F000..=0x1FAFF).contains(&u)
+            || (0x2600..=0x27BF).contains(&u)
+            || (0x2B00..=0x2BFF).contains(&u)
+            || (0xFE00..=0xFE0F).contains(&u)
+            || (0xE0000..=0xE007F).contains(&u)
+            || (0xE000..=0xF8FF).contains(&u)
+            || u == 0x200D
+            || u == 0x20E3
+            || u >= 0xF0000)
+    };
+    let s: String = raw.chars().filter(|&c| keep(c)).collect();
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::display_name;
+    #[test]
+    fn strips_emoji_keeps_thai() {
+        assert_eq!(display_name("มะลิ🌸 ✨ Nok\u{200D}❤️"), "มะลิ Nok");
+        assert_eq!(display_name("🔥🔥"), "");
+        assert_eq!(display_name("  สม  ชาย  "), "สม ชาย");
+    }
 }

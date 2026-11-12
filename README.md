@@ -4,13 +4,30 @@
 
 📖 **คู่มือติดตั้ง-ใช้งานแบบละเอียดทีละขั้น: [docs/คู่มือ.md](docs/คู่มือ.md)**
 
-![ตัวอย่างบนไลฟ์](screenshots/live_pray_t5.png) ![ตัวอย่างเซียมซี](screenshots/live_siamsi_t3.png) ![ระดับ 1](screenshots/live_pray_t1.png)
+![ตัวอย่างบนไลฟ์](screenshots/live_pray_t5.png) ![หลายคนต่อแถว](screenshots/live_multi_3senders.png) ![ตัวอย่างเซียมซี](screenshots/live_siamsi_t3.png) ![ลอยกระทง](screenshots/live_krathong_t5_bless.png)
+
+**ตัวอย่างแบบเคลื่อนไหว:** [ไหว้พระ ระดับ 5](previews/pray_t5.gif) · [เซียมซี ระดับ 5](previews/siamsi_t5.gif) · [ลอยกระทง ระดับ 5](previews/krathong_t5.gif) · [หลายคนต่อแถว](previews/multi_queue_4senders.gif) (มี .mp4 ด้วยในโฟลเดอร์ [`previews/`](previews/))
+
+## มีอะไรใหม่ใน v0.2
+- **ตัวละครน่ารักแบบ chibi** หน้าตา/ทรงผม/สีเสื้อต่างกันตามชื่อผู้ชม · เดินแบบมีจังหวะ กระพริบตา หายใจ ผ้าคลุมพลิ้ว · ไหว้แบบ 3 จังหวะ (ยกมือ → ก้มกราบ → เงย)
+- **ต่อแถวให้เห็น**: ส่งของขวัญพร้อมกันหลายคน → ตัวละครเดินออกมายืน **ต่อแถวทีละคน** (เห็นพร้อมกันสูงสุด `max_visible` = 5 คน ที่เหลือรอนอกจอ) **ทุกคนมีป้ายชื่อเหนือหัว** คนหน้าสุดทำพิธี → เดินออก → แถวขยับ
+- **การ์ดผลบอกชัดว่าเป็นของใคร**: ป้ายชื่อสีเดียวกับเจ้าของ + เส้นประชี้ลงไปที่ตัวละคร · ชื่อที่มีอีโมจิถูกตัดอีโมจิออก (ไม่ขึ้นเป็นกล่องสี่เหลี่ยม)
+- เลขมงคลหมุนแบบ **สล็อตแมชชีน** · เซียมซีเขย่า ไม้กระเด็นตกพื้นจริง กล้องซูม · คำทำนายเป็น **ม้วนกระดาษคลี่ออก** · พลุหลายรูปทรง (วงกลม หัวใจ ดาว วงแหวน) + จอสั่นระดับสูง
+- **โหมดลอยกระทง** 🌕 (เลือกในหน้าตั้งค่า / กด `F2` สลับระหว่างไลฟ์) — ไหว้ขอเลขริมน้ำ หรือ อธิษฐานรับคำอวยพร กระทงลอยค้างในแม่น้ำพร้อมชื่อ
+- **ตอนไม่มีของขวัญ**: `idle = "still"` ภาพนิ่งไม่มีตัวละคร (ค่าเริ่มต้น) · `"ambient"` ขยับเบาๆ · `"hidden"` โปร่งใสทั้งหมด
+- **ปุ่มอัปเดตในโปรแกรม** (แท็บ "อัปเดต"): ตรวจ GitHub Releases ตอนเปิด/กดปุ่ม → แถบแจ้ง + ปุ่ม **อัปเดตเลย** (ดาวน์โหลด สลับไฟล์ แล้วเปิดใหม่เอง) และปุ่มแยก **อัปเดตตัวเชื่อม TikTok** (อัปเดตเฉพาะ `bridge.cjs`)
+- License เปลี่ยนเป็น **AGPL-3.0** (ใช้ `tiktok-live-connector`)
+
+| ก่อน (v0.1) / หลัง (v0.2) |
+|---|
+| ![](screenshots/before_after/pray_t5_3_number.png) |
+| ![](screenshots/before_after/siamsi_t3_3_fortune.png) |
 
 ## ความสามารถ
 - หน้าต่าง **โปร่งใสจริง (per-pixel alpha) ไม่มีขอบ ลอยบนสุด** ลากย้ายได้ เปิด **คลิกทะลุ** ได้ + โหมด **จอเขียว** สำหรับ Chroma Key + โหมด **ฉากวัด** เต็มพื้นหลัง
 - เลย์เอาต์ **ส่วนบนของจอ** (ปรับ % ความสูงได้) หรือ **เต็มจอ 9:16**
 - **หน้าตั้งค่าภาษาไทย** เป็นหน้าต่างแยก (ไม่ติดเข้าไลฟ์) — ชื่อ TikTok + ปุ่มเชื่อมต่อ, ปุ่ม **เริ่ม/หยุด** ใหญ่, ของขวัญ→การกระทำ, เพชรขั้นต่ำแต่ละระดับ, รูปแบบเลข, คำทำนาย, ความเร็ว, ปุ่มทดสอบ → บันทึกลง `config.toml`
-- **คิว**: ส่งพร้อมกันหลายคน เล่นทีละคน
+- **คิวที่มองเห็นได้**: ส่งพร้อมกันหลายคน ตัวละครยืนต่อแถว เล่นทีละคนตามลำดับ (ตั้งจำนวนบนจอได้ `window.max_visible`)
 - ของขวัญแบบคอมโบ (streak) นับตอนจบคอมโบครั้งเดียว ไม่นับซ้ำ
 - ฟอนต์ไทย **Noto Sans Thai** + ตัวเชื่อม TikTok **ฝังอยู่ในไฟล์โปรแกรม** — Windows ใช้แค่ไฟล์ .exe ไฟล์เดียว (config สร้างให้อัตโนมัติ)
 - ภาพทั้งหมดวาดด้วยโค้ด ใส่ PNG ของตัวเองแทนได้ที่ `assets/sprites/` (`buddha.png`, `character.png`, `background.png`)
@@ -32,6 +49,7 @@
 | `Shift+1..5` | เลือกระดับทดสอบ |
 | `Q W E R T` / `A S D F G` | ไหว้พระ / เซียมซี ระดับ 1–5 |
 | `F1`, คลิกขวา, ดับเบิลคลิก | เปิด/ปิดหน้าตั้งค่า |
+| `F2` | สลับโหมด ไหว้พระ ↔ ลอยกระทง |
 | `F8` / `F9` | คลิกทะลุ / สลับพื้นหลัง |
 | `Delete` | ล้างคิว |
 | `Ctrl+Q` (Mac `Cmd+Q`) | ปิดโปรแกรม |
@@ -57,12 +75,26 @@
 |---|---|---|
 | ![](screenshots/siamsi_t5_1_shake.png) | ![](screenshots/siamsi_t5_2_stick.png) | ![](screenshots/siamsi_t5_3_fortune.png) |
 
+| หลายคนต่อแถว — คนหน้าสุดไหว้ | การ์ดเลขของคนหน้าสุด (ชี้ไปที่เจ้าของ) |
+|---|---|
+| ![](screenshots/multi_line_shrine_1.png) | ![](screenshots/multi_line_shrine_2.png) |
+
+### โหมดลอยกระทง
+| เดินถือกระทง | อธิษฐาน | ลอยกระทง | ขึ้นเลข | คำอวยพร |
+|---|---|---|---|---|
+| ![](screenshots/krathong_t5_1_walk.png) | ![](screenshots/krathong_t5_2_wish.png) | ![](screenshots/krathong_t5_3_float.png) | ![](screenshots/krathong_t5_4_number.png) | ![](screenshots/wish_t5_blessing.png) |
+
+### ตอนไม่มีของขวัญ (idle)
+| ไหว้พระ (ภาพนิ่ง) | ลอยกระทง (ภาพนิ่ง) | บนไลฟ์ |
+|---|---|---|
+| ![](screenshots/idle_still_shrine_scene.png) | ![](screenshots/idle_still_krathong_scene.png) | ![](screenshots/live_idle_still.png) |
+
 ทุกระดับ ทุกเฟรม อยู่ในโฟลเดอร์ [`screenshots/`](screenshots/)
 
 ### โหมดพื้นหลัง / เลย์เอาต์
 | โปร่งใส | จอเขียว | หลัง Chroma Key | ฉากวัด | เต็มจอ 9:16 |
 |---|---|---|---|---|
-| ![](screenshots/layout_top_t5.png) | ![](screenshots/mode_green_t5.png) | ![](screenshots/live_green_keyed_t5.png) | ![](screenshots/mode_scene_t4.png) | ![](screenshots/layout_full_t5.png) |
+| ![](screenshots/layout_top_t5.png) | ![](screenshots/mode_green_t5.png) | ![](screenshots/live_green_keyed_t5.png) | ![](screenshots/scene_shrine_pray_t5.png) | ![](screenshots/layout_full_t5.png) |
 
 ### หน้าตั้งค่า
 | เริ่ม/หยุด | หยุดอยู่ | TikTok | หน้าจอ |
@@ -72,6 +104,10 @@
 | ของขวัญ | ระดับ | เลข/เซียมซี | ทดสอบ |
 |---|---|---|---|
 | ![](screenshots/settings_tab3.png) | ![](screenshots/settings_tab4.png) | ![](screenshots/settings_tab5.png) | ![](screenshots/settings_tab6.png) |
+
+| อัปเดต | เริ่ม/หยุด (โหมดลอยกระทง) |
+|---|---|
+| ![](screenshots/settings_tab7.png) | ![](screenshots/settings_tab0_krathong.png) |
 
 ---
 
@@ -94,7 +130,8 @@ TikTok **ไม่มี API ทางการ** สำหรับอ่าน
 | `GET/POST /event` | `/event?action=pray&user=สมชาย&diamonds=100` · `action=siamsi` |
 | `GET/POST /gift` | `/gift?gift_name=Rose&gift_id=5655&user=สมชาย&diamonds=1&repeat=5` (จับคู่ตามตารางของขวัญ) |
 | `POST` JSON | `{"gift_name":"Rose","user":"สมชาย","diamonds":1,"repeat":5}` · รองรับชื่อฟิลด์แบบ `nickname`, `giftName`, `diamondCount`, `repeatCount` |
-| `GET /control` | `?click_through=toggle\|1\|0` · `?background=green\|transparent\|scene` · `?clear=1` |
+| `GET /control` | `?click_through=toggle\|1\|0` · `?background=green\|transparent\|scene` · `?clear=1` · `?mode=shrine\|krathong` · `?idle=still\|ambient\|hidden` · `?layout=top\|full` · `?running=0\|1` · `?save=1` · `?reload=1` · `?update=check\|apply\|bridge` |
+| `GET /state` | สถานะ JSON (คิว, แถว, คนที่กำลังเล่น, โหมด) — ใช้ในชุดทดสอบ |
 | `GET /health` | `ok` |
 
 ## สำหรับนักพัฒนา
@@ -104,6 +141,9 @@ src/app.rs      คิว, ไทม์ไลน์แอนิเมชัน, 
 src/scene.rs    ภาพวาดทั้งหมด (องค์พระ, ตัวละคร 5 ระดับ, เซียมซี, ป้ายชื่อ, การ์ด) + sprite override
 src/events.rs   trait EventSource, HttpSource, TikTokBridgeSource (Node bridge), แปลง JSON
 src/config.rs   config.toml (serde) + ค่าเริ่มต้นฝังในโปรแกรม
+src/krathong.rs ฉากลอยกระทง (แม่น้ำ, ศาลา, กระทง)
+src/updater.rs  อัปเดตตัวเอง (GitHub Releases) + อัปเดตตัวเชื่อม TikTok
+scripts/e2e_test.py  ชุดทดสอบ end-to-end (คีย์, HTTP, ระดับ, คิว, แถวหลายคน, โหมด, save/reload) → tests/e2e_results.md
 bridge/         bridge.js (tiktok-live-connector) → bundle เป็น dist/bridge.cjs ด้วย esbuild
 ```
 **ทำไม eframe/egui** (แทน macroquad): ต้องการหน้าต่างโปร่งใส per-pixel + always-on-top + click-through + หลายหน้าต่าง (ตั้งค่าแยก) บน Windows/macOS ซึ่ง eframe รองรับครบผ่าน winit/glutin และ text shaping (harfrust) ทำให้สระ/วรรณยุกต์ไทยวางถูกตำแหน่ง
@@ -124,7 +164,7 @@ scripts/make_screenshots.sh && python3 scripts/make_composites.py
 # ถ่ายภาพเฟรมเดียว:
 ./target/release/tiktok-shrine-live --demo pray:5:ชื่อ --shot-at 8 --out shot.png --bg transparent --layout top
 ```
-**CI**: `.github/workflows/release.yml` — build Windows (.exe มี icon, zip) และ macOS (universal .app + .dmg) บน runner จริง; push tag `v*` แล้วจะแนบไฟล์ใน GitHub Release
+**CI**: `.github/workflows/release.yml` — build Windows (.exe มี icon, zip), macOS (universal .app + .dmg + .zip), Linux (tar.gz) และตัวเชื่อม (`bridge.cjs` + `bridge-version.json`) บน runner จริง; push tag `v*` แล้วจะแนบไฟล์ใน GitHub Release · `bridge.yml` สร้างตัวเชื่อมล่าสุดลง release `bridge-latest` ทุกสัปดาห์
 
 ## License
 โค้ดทั้งหมด: **AGPL-3.0-only** (`LICENSE`) เพราะฝัง [`tiktok-live-connector`](https://github.com/zerodytrash/TikTok-Live-Connector) (AGPL-3.0) ไว้ในตัวโปรแกรม · ฟอนต์ Noto Sans / Noto Sans Thai: SIL OFL 1.1 (`assets/fonts/OFL.txt`) · รายละเอียดผู้มีส่วนร่วมดู `NOTICE.md`

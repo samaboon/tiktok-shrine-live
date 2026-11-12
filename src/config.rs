@@ -106,6 +106,8 @@ pub struct WindowCfg {
     pub show_status: bool,
     /// when no gift is playing: "still" = still picture (default), "ambient" = subtle motion, "hidden" = fully transparent
     pub idle: String,
+    /// how many characters may be on screen at once (the one at the shrine + the line waiting behind)
+    pub max_visible: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -170,6 +172,7 @@ impl Default for WindowCfg {
             hint_text: String::new(),
             show_status: true,
             idle: "still".into(),
+            max_visible: 5,
         }
     }
 }

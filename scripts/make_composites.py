@@ -103,6 +103,7 @@ jobs = [
     ('live_krathong_t5_bless', ('--theme', 'krathong', '--demo', 'siamsi:5:จักรพรรดิเพชร', '--seed', '95', '--shot-at', '10.0'), {}),
     ('live_idle_still', ('--shot-at', '3'), {}),
     ('live_fullscreen_t5', ('--demo', D5, '--seed', '55', '--shot-at', '10.2', '--layout', 'full'), {'full': True}),
+    ('live_multi_3senders', ('--demo', 'pray:3:มะลิ', '--demo', 'siamsi:2:สมชาย', '--demo', 'pray:1:Nok', '--seed', '5', '--shot-at', '9.5'), {}),
     ('live_green_keyed_t5', ('--demo', D5, '--seed', '55', '--shot-at', '10.2', '--bg', 'green'), {'green': True}),
 ]
 for name, args, kw in jobs:

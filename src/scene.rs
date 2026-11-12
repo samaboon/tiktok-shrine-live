@@ -206,7 +206,11 @@ impl<'a> Cx<'a> {
         self.p.add(Shape::mesh(mesh));
     }
     pub fn font(&self, size: f32, bold: bool) -> FontId {
-        FontId::new((size * self.k()).max(4.0), if bold { FontFamily::Name("bold".into()) } else { FontFamily::Proportional })
+        // quantise: animated sizes (pop-ins, camera zoom) would otherwise rasterise a new glyph set every frame
+        // and keep growing egui's font atlas (seen in the soak test as RSS steps 36 -> 325 MB)
+        let px = (size * self.k()).max(4.0);
+        let px = if px < 48.0 { px.round() } else { (px / 3.0).round() * 3.0 };
+        FontId::new(px, if bold { FontFamily::Name("bold".into()) } else { FontFamily::Proportional })
     }
     pub fn text(&self, x: f32, y: f32, anchor: Align2, t: &str, size: f32, c: Color32, bold: bool) -> Rect {
         self.p.text(self.pt(x, y), anchor, t, self.font(size, bold), c)
