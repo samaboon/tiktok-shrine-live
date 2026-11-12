@@ -181,6 +181,13 @@ def main():
         for b in ['green', 'scene', 'transparent']:
             get(f'/control?background={b}'); s = wait_for(lambda s: s['background'] == b)
             check(f'background mode {b}', s['background'] == b)
+        # transparent (โปร่งใส): idle = no props over the camera; props fade in while a gift plays
+        s = wait_for(lambda s: s['current'] is None and not s['queue'] and s.get('props_alpha', 1) < 0.05, 25)
+        check('transparent idle: ground props hidden', s.get('props_alpha', 1) < 0.05 and s.get('props') is True, f"props_alpha={s.get('props_alpha')}")
+        get('/gift?gift_name=Rose&user=propcheck&diamonds=1')
+        s = wait_for(lambda s: s['current'] is not None and s.get('props_alpha', 0) > 0.9, 10)
+        check('transparent show: props fade in', s.get('props_alpha', 0) > 0.9, f"props_alpha={s.get('props_alpha')}")
+        get('/control?clear=1')
         get('/control?mode=krathong'); s = wait_for(lambda s: s['theme'] == 'krathong')
         check('runtime mode switch -> krathong', s['theme'] == 'krathong')
         c = count(); get('/gift?gift_name=Rose&user=loy&diamonds=1000')

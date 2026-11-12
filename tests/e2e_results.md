@@ -1,6 +1,6 @@
-# E2E results (2026-11-12 22:54 +07)
+# E2E results (2026-11-12 23:16 +07)
 
-64/64 passed
+66/66 passed
 
 | # | test | result | detail |
 |---|---|---|---|
@@ -42,29 +42,31 @@
 | 36 | 3 senders: line is single-file, no overlap (>=100 px apart, on screen) | PASS | x=[430.0, 285.0] |
 | 37 | emoji stripped from name label (no tofu) | PASS |  |
 | 38 | shrine result card matches action (pray -> lucky numbers, siamsi -> fortune) | PASS | Pray -> numbers |
-| 39 | 3 senders: line advances (2nd sender steps up, 3rd moves forward) | PASS | line=[{'user': 'ผู้ส่งC', 'x': 414.0}] |
+| 39 | 3 senders: line advances (2nd sender steps up, 3rd moves forward) | PASS | line=[{'user': 'ผู้ส่งC', 'x': 402.0}] |
 | 40 | 3 senders: each gets their own turn in order | PASS |  |
 | 41 | layout toggle full/top (window resizes) | PASS | [540.0, 960.0] vs [540.0, 480.0] |
 | 42 | background mode green | PASS |  |
 | 43 | background mode scene | PASS |  |
 | 44 | background mode transparent | PASS |  |
-| 45 | runtime mode switch -> krathong | PASS |  |
-| 46 | krathong: krathong is released and keeps floating | PASS | floating=1 |
-| 47 | runtime mode switch -> cat (ให้อาหารแมว) | PASS |  |
-| 48 | cat: 3 senders -> front cat + 2 cats visible in line | PASS | current=แมวA line=[{'user': 'แมวB', 'x': -46.0}, {'user': 'แมวC', 'x': -46.0}] |
-| 49 | cat: walk -> pour -> eat -> card phases | PASS | ['card', 'eat', 'leave', 'pour', 'walk'] |
-| 50 | cat: result is thank-you card only (no lucky numbers) | PASS | {'thanks'} |
-| 51 | cat: line advances to next sender | PASS | line=[{'user': 'แมวC', 'x': 369.0}] |
-| 52 | runtime mode switch -> shrine | PASS |  |
-| 53 | click-through on/off via /control | PASS |  |
-| 54 | stop: gifts ignored while stopped | PASS |  |
-| 55 | start: gifts accepted again | PASS |  |
-| 56 | idle=hidden: scene fades fully transparent when idle | PASS | alpha=0.00 |
-| 57 | idle=hidden: gift fades the scene back in and plays | PASS |  |
-| 58 | idle=ambient: subtle motion keeps running | PASS |  |
-| 59 | idle=still: back to frozen still picture | PASS |  |
-| 60 | save writes config.toml | PASS |  |
-| 61 | reload picks up edited config.toml | PASS |  |
-| 62 | saved config keeps Thai text (UTF-8) | PASS |  |
-| 63 | Ctrl+Q quits | PASS |  |
-| 64 | no panic in log | PASS |  |
+| 45 | transparent idle: ground props hidden | PASS | props_alpha=0.0 |
+| 46 | transparent show: props fade in | PASS | props_alpha=1.0 |
+| 47 | runtime mode switch -> krathong | PASS |  |
+| 48 | krathong: krathong is released and keeps floating | PASS | floating=1 |
+| 49 | runtime mode switch -> cat (ให้อาหารแมว) | PASS |  |
+| 50 | cat: 3 senders -> front cat + 2 cats visible in line | PASS | current=แมวA line=[{'user': 'แมวB', 'x': -70.0}, {'user': 'แมวC', 'x': -70.0}] |
+| 51 | cat: walk -> pour -> eat -> card phases | PASS | ['card', 'eat', 'leave', 'pour', 'walk'] |
+| 52 | cat: result is thank-you card only (no lucky numbers) | PASS | {'thanks'} |
+| 53 | cat: line advances to next sender | PASS | line=[{'user': 'แมวC', 'x': 373.0}] |
+| 54 | runtime mode switch -> shrine | PASS |  |
+| 55 | click-through on/off via /control | PASS |  |
+| 56 | stop: gifts ignored while stopped | PASS |  |
+| 57 | start: gifts accepted again | PASS |  |
+| 58 | idle=hidden: scene fades fully transparent when idle | PASS | alpha=0.00 |
+| 59 | idle=hidden: gift fades the scene back in and plays | PASS |  |
+| 60 | idle=ambient: subtle motion keeps running | PASS |  |
+| 61 | idle=still: back to frozen still picture | PASS |  |
+| 62 | save writes config.toml | PASS |  |
+| 63 | reload picks up edited config.toml | PASS |  |
+| 64 | saved config keeps Thai text (UTF-8) | PASS |  |
+| 65 | Ctrl+Q quits | PASS |  |
+| 66 | no panic in log | PASS |  |

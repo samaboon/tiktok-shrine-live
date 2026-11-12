@@ -116,7 +116,11 @@ pub struct WindowCfg {
     pub top_percent: f32,
     pub x: Option<f32>,
     pub y: Option<f32>,
+    /// "scene" = ฉากเต็ม (full backdrop), "transparent" = โปร่งใส (only characters, tags, cards, fireworks
+    /// over the camera), "green" = chroma key
     pub background: String,
+    /// transparent mode: keep small ground props (shrine / river line / bowl) while a gift is playing
+    pub props: bool,
     pub always_on_top: bool,
     pub click_through: bool,
     pub show_hint: bool,
@@ -184,6 +188,7 @@ impl Default for WindowCfg {
             x: None,
             y: None,
             background: "transparent".into(),
+            props: true,
             always_on_top: true,
             click_through: false,
             show_hint: true,

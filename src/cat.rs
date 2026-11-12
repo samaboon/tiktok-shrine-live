@@ -658,9 +658,10 @@ impl Stage {
     }
 
     // ------------------------------------------------------------------ drawing
-    pub fn draw_world(&self, cx: &Cx, bg: &str, reveal_base: f32, max_visible: usize) {
+    /// `props`: same camera as `cx` but faded by the transparent-mode props setting (room floor + bowl)
+    pub fn draw_world(&self, cx: &Cx, props: &Cx, bg: &str, reveal_base: f32, max_visible: usize) {
         let scene = bg == "scene";
-        draw_room(cx, scene);
+        draw_room(props, scene);
         self.draw_fx(cx, true);
         let pour = self.shows.front().and_then(|s| {
             if s.front && s.phase(reveal_base.max(1.5) + s.tier as f32 * 0.5) == "pour" {
@@ -672,7 +673,7 @@ impl Stage {
                 None
             }
         });
-        draw_bowl(cx, self.bowl_food, self.bowl_treat, pour);
+        draw_bowl(props, self.bowl_food, self.bowl_treat, pour);
         let cap = max_visible.clamp(1, 12);
         let mut vis: Vec<&CatShow> = self.shows.iter().take(cap).collect();
         vis.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
@@ -684,8 +685,12 @@ impl Stage {
             } else {
                 1.0
             };
-            draw_cat(cx, s.x, cx.ground(), &s.look, &pose, alpha);
             let head_top = cat_head_top(s.x, cx.ground(), &s.look, &pose);
+            if alpha > 0.02 {
+                let g = cx.ground();
+                cx.halo(s.x, (head_top + g) / 2.0, 72.0 * s.look.scale, (g - head_top) / 2.0 + 12.0);
+            }
+            draw_cat(cx, s.x, cx.ground(), &s.look, &pose, alpha);
             draw_cat_name_tag(cx, s, head_top, alpha);
         }
         self.draw_fx(cx, false);

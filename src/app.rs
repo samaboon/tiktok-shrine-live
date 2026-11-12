@@ -167,6 +167,8 @@ pub struct ShrineApp {
     scene_time: f32,
     idle_for: f32,
     scene_alpha: f32,
+    /// transparent mode: opacity of the small ground props (fade out when idle)
+    props_alpha: f32,
     gap: f32,
     shake: f32,
     /// where the active character's name label was drawn (for the result card pointer)
@@ -255,6 +257,7 @@ impl ShrineApp {
             scene_time: 0.0,
             idle_for: 10.0,
             scene_alpha: 0.0,
+            props_alpha: 0.0,
             gap: 0.0,
             banner_at: std::cell::Cell::new((PRAY_X, 300.0)),
             shake: 0.0,
@@ -502,6 +505,14 @@ impl ShrineApp {
         let target_alpha = if idle_mode == "hidden" && !active { 0.0 } else { 1.0 };
         let rate = if target_alpha > self.scene_alpha { 3.0 } else { 1.2 };
         self.scene_alpha += (target_alpha - self.scene_alpha).clamp(-rate * dt_real, rate * dt_real);
+        // transparent mode: props only while something is happening (idle = nothing over the camera)
+        let props_target = match self.cfg.window.background.as_str() {
+            "transparent" if !self.cfg.window.props => 0.0,
+            "transparent" if !active && self.floating.is_empty() => 0.0,
+            _ => 1.0,
+        };
+        let pr = if props_target > self.props_alpha { 2.5 } else { 0.8 };
+        self.props_alpha += (props_target - self.props_alpha).clamp(-pr * dt_real, pr * dt_real);
         self.shake *= (-6.0 * dt_real).exp();
 
         // queue / transitions
@@ -1199,11 +1210,17 @@ impl ShrineApp {
             cx.ox += noise1(self.time * 40.0) * self.shake;
             cx.oy += noise1(self.time * 37.0 + 5.0) * self.shake;
         }
+        cx.halo = bg == "transparent";
+        let mut props_painter = painter.clone();
+        props_painter.multiply_opacity(self.props_alpha.clamp(0.0, 1.0));
+        let pcx = cx.with_painter(&props_painter);
         let sprites = self.sprites.as_ref().unwrap();
+        // name tags go on their own layer above result cards, so a card never hides whose character is whose
+        defer_tags_begin();
         match theme {
-            Theme::Shrine => self.draw_shrine_world(&cx, sprites, &bg),
-            Theme::Krathong => self.draw_krathong_world(&cx, sprites, &bg),
-            Theme::Cat => self.cats.draw_world(&cx, &bg, self.cfg.timing.reveal_seconds, self.cfg.cat.max_visible),
+            Theme::Shrine => self.draw_shrine_world(&cx, &pcx, sprites, &bg),
+            Theme::Krathong => self.draw_krathong_world(&cx, &pcx, sprites, &bg),
+            Theme::Cat => self.cats.draw_world(&cx, &pcx, &bg, self.cfg.timing.reveal_seconds, self.cfg.cat.max_visible),
         }
         draw_particles(&cx, &self.particles, false);
 
@@ -1224,14 +1241,16 @@ impl ShrineApp {
             }
             self.cats.draw_overlay(&ui_cx, &self.cfg.cat.thanks_title, self.cfg.timing.reveal_seconds);
         }
+        defer_tags_flush(&cx);
         self.draw_hud(&ui_cx);
     }
 
-    fn draw_shrine_world(&self, cx: &Cx, sprites: &Sprites, bg: &str) {
+    /// `pcx` = same camera, faded by the transparent-mode props setting (platform, shrine, flowers)
+    fn draw_shrine_world(&self, cx: &Cx, pcx: &Cx, sprites: &Sprites, bg: &str) {
         if bg == "scene" {
             draw_backdrop(cx, sprites);
         } else {
-            draw_platform(cx);
+            draw_platform(pcx);
         }
         draw_particles(cx, &self.particles, true);
         let mut shrine_glow = 0.0;
@@ -1250,18 +1269,22 @@ impl ShrineApp {
                 cyl_on_altar = false;
             }
         }
-        draw_shrine(cx, sprites, shrine_glow, cyl_on_altar);
+        draw_shrine(pcx, sprites, shrine_glow, cyl_on_altar);
         self.draw_current_and_line(cx, sprites);
-        draw_foreground_flowers(cx);
+        draw_foreground_flowers(pcx);
     }
 
-    fn draw_krathong_world(&self, cx: &Cx, sprites: &Sprites, bg: &str) {
+    fn draw_krathong_world(&self, cx: &Cx, pcx: &Cx, sprites: &Sprites, bg: &str) {
         let scene = bg == "scene";
         if scene {
             kr::draw_sky(cx, sprites);
         }
         draw_particles(cx, &self.particles, true);
-        kr::draw_river(cx, scene, scene);
+        if bg == "transparent" {
+            kr::draw_waterline(pcx);
+        } else {
+            kr::draw_river(cx, scene, scene);
+        }
         let vh = cx.vh;
         let wt = kr::water_top(vh);
         let mut fl: Vec<&Floating> = self.floating.iter().collect();
@@ -1272,9 +1295,13 @@ impl ShrineApp {
             let bob = (cx.time * 1.6 + f.seed).sin() * 2.5;
             kr::draw_krathong(cx, f.x, f.y + bob, sc, f.tier, f.seed, Some(&f.name), alpha);
         }
-        kr::draw_bank(cx);
+        if bg != "transparent" {
+            kr::draw_bank(cx);
+        }
         self.draw_current_and_line(cx, sprites);
-        kr::draw_foreground(cx);
+        if bg != "transparent" {
+            kr::draw_foreground(cx);
+        }
     }
 
     /// the active character + the waiting line; a character walking away passes behind the line
@@ -1353,15 +1380,16 @@ impl ShrineApp {
     fn pray_geo(&self, s: &Show) -> PrayGeo {
         let rows = s.numbers.len();
         let tier = s.tier;
-        let cxx = match s.theme {
-            Theme::Krathong => 650.0,
-            Theme::Cat => 540.0,
-            Theme::Shrine => 430.0,
-        };
         let top = 30.0;
         let row_h = 118.0;
         let hgt = 110.0 + rows as f32 * row_h;
-        let wdt = 600.0 + tier as f32 * 20.0;
+        // riverbank: the kneeling character + its name tag are on the left, so the card hugs the right edge
+        let wdt = if s.theme == Theme::Krathong { 500.0 } else { 600.0 + tier as f32 * 20.0 };
+        let cxx = match s.theme {
+            Theme::Krathong => VW - 16.0 - wdt / 2.0,
+            Theme::Cat => 540.0,
+            Theme::Shrine => 430.0,
+        };
         let size = 82.0 + tier as f32 * 5.0;
         let mut row_y = vec![];
         let mut digit_x = vec![];
@@ -1415,7 +1443,9 @@ impl ShrineApp {
             cx.poly(&[(ox, oy - 9.0), (ox + 9.0, oy), (ox, oy + 9.0), (ox - 9.0, oy)], with_a(border, alpha));
         }
         let title = format!("{} ของ {}", self.cfg.numbers.title, s.user);
-        cx.text_o(geo.cxx, top + 55.0, Align2::CENTER_CENTER, &title, 38.0, with_a(GOLD, alpha), rgba(60, 0, 0, alpha), true);
+        let tw = cx.measure(&title, 38.0, true).x.max(1.0);
+        let tsize = if tw > geo.wdt - 70.0 { (38.0 * (geo.wdt - 70.0) / tw).max(22.0) } else { 38.0 };
+        cx.text_o(geo.cxx, top + 55.0, Align2::CENTER_CENTER, &title, tsize, with_a(GOLD, alpha), rgba(60, 0, 0, alpha), true);
         self.owner_tag(cx, s, x0, x1, top, top + geo.hgt, alpha);
         for (i, (label, num)) in s.numbers.iter().enumerate() {
             let y = geo.row_y[i] + yoff;
@@ -1496,8 +1526,9 @@ impl ShrineApp {
 
     fn draw_blessing(&self, cx: &Cx, s: &Show, rt: f32, r: f32) {
         let tier = s.tier;
-        let cxx = 650.0;
-        let wdt = 620.0 + tier as f32 * 16.0;
+        // right-aligned so it never covers the kneeling character's name tag on the bank
+        let wdt = 480.0 + tier as f32 * 8.0;
+        let cxx = VW - 16.0 - wdt / 2.0;
         let hgt = 310.0;
         let fo = smooth((rt - (r - 0.5)) / 0.5);
         let alpha = smooth(rt / 0.25) * (1.0 - fo);
@@ -1514,7 +1545,13 @@ impl ShrineApp {
         }
         let ca = alpha * smooth((rt - 0.35) / 0.4);
         kr::draw_krathong(cx, x0 + 64.0, top + 74.0, 0.5, tier, s.look.seed, None, ca);
-        cx.text_o(cxx + 20.0, top + 62.0, Align2::CENTER_CENTER, &format!("{} {}", self.cfg.krathong.wish_title, s.user), 36.0, with_a(GOLD, ca), rgba(10, 10, 40, ca), true);
+        let title = format!("{} {}", self.cfg.krathong.wish_title, s.user);
+        // title sits between the krathong icon (left) and the card edge
+        let (tx0, tx1) = (x0 + 118.0, x1 - 22.0);
+        let avail = tx1 - tx0;
+        let tw = cx.measure(&title, 36.0, true).x.max(1.0);
+        let tsize = if tw > avail { (36.0 * avail / tw).max(22.0) } else { 36.0 };
+        cx.text_o((tx0 + tx1) / 2.0, top + 62.0, Align2::CENTER_CENTER, &title, tsize, with_a(GOLD, ca), rgba(10, 10, 40, ca), true);
         cx.seg((x0 + 70.0, top + 112.0), (x1 - 70.0, top + 112.0), 2.0, with_a(GOLD, ca * 0.8));
         self.owner_tag(cx, s, x0, x1, top, top + h2, ca);
         let ta = alpha * smooth((rt - 0.7) / 0.5);
@@ -1629,6 +1666,8 @@ impl ShrineApp {
             "idle": !self.active(),
             "idle_mode": self.cfg.window.idle,
             "scene_alpha": self.scene_alpha,
+            "props": self.cfg.window.props,
+            "props_alpha": self.props_alpha,
             "scene_time": self.scene_time,
             "background": self.cfg.window.background,
             "layout": self.cfg.window.layout,
@@ -1999,9 +2038,13 @@ impl ShrineApp {
             ui.end_row();
             ui.label("พื้นหลัง");
             ui.vertical(|ui| {
-                ui.radio_value(&mut self.cfg.window.background, "transparent".to_string(), "โปร่งใส (ลอยทับจอ)");
+                ui.radio_value(&mut self.cfg.window.background, "scene".to_string(), "ฉากเต็ม (วัด / แม่น้ำยามค่ำ / มุมแมว)");
+                ui.radio_value(&mut self.cfg.window.background, "transparent".to_string(), "โปร่งใส (เห็นกล้อง: มีแค่ตัวละคร ป้ายชื่อ การ์ด พลุ)");
+                if self.cfg.window.background == "transparent" {
+                    ui.checkbox(&mut self.cfg.window.props, "  ของประกอบเล็ก ๆ ตอนมีของขวัญ (ศาล / เส้นน้ำ / ชามข้าวแมว)");
+                }
                 ui.radio_value(&mut self.cfg.window.background, "green".to_string(), "สีเขียว (Chroma Key)");
-                ui.radio_value(&mut self.cfg.window.background, "scene".to_string(), "ฉากเต็มพื้นหลัง (วัด / แม่น้ำยามค่ำ / มุมแมว)");
+                ui.label(egui::RichText::new("ใช้กับทั้ง 3 โหมด: ศาล/เซียมซี, ลอยกระทง, แมว").small().weak());
             });
             ui.end_row();
             ui.label("ลอยอยู่บนสุดเสมอ");
@@ -2510,6 +2553,9 @@ pub fn save_png(img: &egui::ColorImage, out: &std::path::Path, preview: bool) {
 
 /// small down-pointing marker in the sender's colour under a name label (matches the colour tag on their result card)
 fn tag_pointer(cx: &Cx, x: f32, y: f32, c: Color32, alpha: f32) {
+    on_tag_layer(cx, Box::new(move |cx| tag_pointer_now(cx, x, y, c, alpha)));
+}
+fn tag_pointer_now(cx: &Cx, x: f32, y: f32, c: Color32, alpha: f32) {
     if alpha <= 0.01 {
         return;
     }

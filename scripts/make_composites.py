@@ -78,8 +78,11 @@ def composite(raw, out, green=False, full=False):
         d = ImageDraw.Draw(img, 'RGBA')
         for x in range(0, W, 40):
             d.line([(x, 960), (x + 20, 960)], fill=(255, 255, 255, 110), width=3)
-    img.convert('RGB').resize((540, 960), Image.LANCZOS).save(out)
-    print('saved', out)
+    small = img.convert('RGB').resize((540, 960), Image.LANCZOS)
+    if out:
+        small.save(out)
+        print('saved', out)
+    return small
 
 import subprocess, tempfile
 BIN = os.environ.get('BIN', './target/release/tiktok-shrine-live')
@@ -94,18 +97,22 @@ def render(name, *args, opaque=False):
     assert opaque or (im.mode == 'RGBA' and im.getextrema()[3][0] == 0), f'{name}: no real transparency'
     return out
 
-D5 = 'pray:5:จักรพรรดิเพชร'
-jobs = [
-    ('live_pray_t5', ('--demo', D5, '--seed', '55', '--shot-at', '10.2'), {}),
-    ('live_pray_t1', ('--demo', 'pray:1:มะลิ', '--seed', '11', '--shot-at', '9.2'), {}),
-    ('live_siamsi_t3', ('--demo', 'siamsi:3:เศรษฐีต้น', '--seed', '39', '--shot-at', '11.4'), {}),
-    ('live_krathong_t4', ('--theme', 'krathong', '--demo', 'pray:4:เจ้าสัวเฮง', '--seed', '68', '--shot-at', '7.3'), {}),
-    ('live_krathong_t5_bless', ('--theme', 'krathong', '--demo', 'siamsi:5:จักรพรรดิเพชร', '--seed', '95', '--shot-at', '10.0'), {}),
-    ('live_idle_still', ('--shot-at', '3'), {}),
-    ('live_fullscreen_t5', ('--demo', D5, '--seed', '55', '--shot-at', '10.2', '--layout', 'full'), {'full': True}),
-    ('live_multi_3senders', ('--demo', 'pray:3:มะลิ', '--demo', 'siamsi:2:สมชาย', '--demo', 'pray:1:Nok', '--seed', '5', '--shot-at', '9.5'), {}),
-    ('live_cat_3senders', ('--theme', 'cat', '--demo', 'pray:3:มะลิ', '--demo', 'pray:2:สมชาย', '--demo', 'pray:1:Nok', '--seed', '42', '--shot-at', '7.4'), {}),
-    ('live_green_keyed_t5', ('--demo', D5, '--seed', '55', '--shot-at', '10.2', '--bg', 'green'), {'green': True}),
-]
-for name, args, kw in jobs:
-    composite(render(name, *args, opaque=kw.get('green', False)), f'screenshots/{name}.png', **kw)
+def main():
+    D5 = 'pray:5:จักรพรรดิเพชร'
+    jobs = [
+        ('live_pray_t5', ('--demo', D5, '--seed', '55', '--shot-at', '10.2'), {}),
+        ('live_pray_t1', ('--demo', 'pray:1:มะลิ', '--seed', '11', '--shot-at', '9.2'), {}),
+        ('live_siamsi_t3', ('--demo', 'siamsi:3:เศรษฐีต้น', '--seed', '39', '--shot-at', '11.4'), {}),
+        ('live_krathong_t4', ('--theme', 'krathong', '--demo', 'pray:4:เจ้าสัวเฮง', '--seed', '68', '--shot-at', '7.3'), {}),
+        ('live_krathong_t5_bless', ('--theme', 'krathong', '--demo', 'siamsi:5:จักรพรรดิเพชร', '--seed', '95', '--shot-at', '10.0'), {}),
+        ('live_idle_still', ('--shot-at', '3'), {}),
+        ('live_fullscreen_t5', ('--demo', D5, '--seed', '55', '--shot-at', '10.2', '--layout', 'full'), {'full': True}),
+        ('live_multi_3senders', ('--demo', 'pray:3:มะลิ', '--demo', 'siamsi:2:สมชาย', '--demo', 'pray:1:Nok', '--seed', '5', '--shot-at', '9.5'), {}),
+        ('live_cat_3senders', ('--theme', 'cat', '--demo', 'pray:3:มะลิ', '--demo', 'pray:2:สมชาย', '--demo', 'pray:1:Nok', '--seed', '42', '--shot-at', '7.4'), {}),
+        ('live_green_keyed_t5', ('--demo', D5, '--seed', '55', '--shot-at', '10.2', '--bg', 'green'), {'green': True}),
+    ]
+    for name, args, kw in jobs:
+        composite(render(name, *args, opaque=kw.get('green', False)), f'screenshots/{name}.png', **kw)
+
+if __name__ == '__main__':
+    main()

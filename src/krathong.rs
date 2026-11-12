@@ -92,6 +92,37 @@ pub fn draw_river(cx: &Cx, moon: bool, opaque: bool) {
     }
 }
 
+/// Transparent mode: just a thin wooden ledge for the characters + a soft water line that fades out,
+/// so the camera stays visible. Floating krathongs drift over it.
+pub fn draw_waterline(cx: &Cx) {
+    let h = cx.vh;
+    let g = bank_y(h);
+    let wt = water_top(h);
+    let t = cx.time;
+    // water band: translucent at the top, gone by ~140px
+    cx.vgradient(-60.0, wt, VW + 60.0, wt + 150.0, rgba(40, 90, 170, 0.45), rgba(40, 90, 170, 0.0));
+    for j in 0..4 {
+        let y = wt + 8.0 + j as f32 * 22.0;
+        let a = 0.55 * (1.0 - j as f32 / 4.0);
+        let seg = 40.0;
+        let mut x = BANK_EDGE - 30.0;
+        while x < VW + 20.0 {
+            let y1 = y + (x * 0.02 + t * 1.4 + j as f32).sin() * 2.0;
+            let y2 = y + ((x + seg) * 0.02 + t * 1.4 + j as f32).sin() * 2.0;
+            cx.seg((x, y1), (x + seg, y2), 2.0, rgba(190, 220, 255, a));
+            x += seg;
+        }
+    }
+    // wooden pier the characters kneel on
+    cx.ellipse(BANK_EDGE / 2.0, g + 10.0, BANK_EDGE / 2.0 + 20.0, 16.0, rgba(0, 0, 0, 0.25));
+    cx.rect(-10.0, g - 4.0, BANK_EDGE + 20.0, g + 14.0, 6.0, rgba(122, 72, 40, 0.95));
+    cx.rect(-10.0, g - 4.0, BANK_EDGE + 20.0, g + 2.0, 4.0, rgba(190, 128, 74, 1.0));
+    for i in 0..6 {
+        let x = 40.0 + i as f32 * 80.0;
+        cx.rect(x, g + 14.0, x + 10.0, g + 40.0, 2.0, rgba(100, 60, 34, 0.8));
+    }
+}
+
 /// Riverside terrace (ท่าน้ำ) bottom-left: little Thai sala, string lights, grass, stone wall + steps.
 pub fn draw_bank(cx: &Cx) {
     let h = cx.vh;

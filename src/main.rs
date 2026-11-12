@@ -34,6 +34,7 @@ struct Args {
     out: Option<PathBuf>,
     settings_tab: Option<usize>,
     bg: Option<String>,
+    props: Option<bool>,
     layout: Option<String>,
     width: Option<f32>,
     seed: Option<u64>,
@@ -48,7 +49,7 @@ struct Args {
 }
 
 fn parse_args() -> Args {
-    let mut a = Args { config: None, demo: vec![], shot_at: None, out: None, settings_tab: None, bg: None, layout: None, width: None, seed: None, preview: false, settings: false, no_status: false, stopped: false, theme: None, record: None, http_in_shot: false, fake_version: None };
+    let mut a = Args { config: None, demo: vec![], shot_at: None, out: None, settings_tab: None, bg: None, props: None, layout: None, width: None, seed: None, preview: false, settings: false, no_status: false, stopped: false, theme: None, record: None, http_in_shot: false, fake_version: None };
     let mut it = std::env::args().skip(1);
     while let Some(x) = it.next() {
         match x.as_str() {
@@ -72,6 +73,7 @@ fn parse_args() -> Args {
                 a.settings = true;
             }
             "--bg" => a.bg = it.next(),
+            "--props" => a.props = it.next().map(|v| v != "off" && v != "0" && v != "false"),
             "--layout" => a.layout = it.next(),
             "--width" => a.width = it.next().and_then(|v| v.parse().ok()),
             "--seed" => a.seed = it.next().and_then(|v| v.parse().ok()),
@@ -92,7 +94,7 @@ fn parse_args() -> Args {
                 }
             }
             "--help" | "-h" => {
-                println!("tiktok-shrine-live [--config PATH] [--settings]\n  test: --demo pray:5:ชื่อ --shot-at 7 --out shot.png [--bg transparent|green|scene] [--layout top|full] [--preview]");
+                println!("tiktok-shrine-live [--config PATH] [--settings]\n  test: --demo pray:5:ชื่อ --shot-at 7 --out shot.png [--bg transparent|green|scene] [--props on|off] [--layout top|full] [--preview]");
                 std::process::exit(0);
             }
             _ => {}
@@ -217,6 +219,9 @@ fn main() -> eframe::Result<()> {
     let shot_mode = args.shot_at.is_some();
     if let Some(b) = &args.bg {
         cfg.window.background = b.clone();
+    }
+    if let Some(p) = args.props {
+        cfg.window.props = p;
     }
     if let Some(l) = &args.layout {
         cfg.window.layout = l.clone();

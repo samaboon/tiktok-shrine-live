@@ -83,15 +83,17 @@ pub struct Cx<'a> {
     pub oy: f32,
     /// ground line override (krathong theme uses a higher river bank)
     pub gy: Option<f32>,
+    /// transparent mode: soft dark halo behind characters so they stay readable over any camera
+    pub halo: bool,
 }
 
 impl<'a> Cx<'a> {
     pub fn new(p: &'a Painter, rect: Rect, time: f32) -> Self {
         let s = rect.width() / VW;
-        Self { p, s, o: rect.min, vh: rect.height() / s, time, soft: true, z: 1.0, fx: 0.0, fy: 0.0, ox: 0.0, oy: 0.0, gy: None }
+        Self { p, s, o: rect.min, vh: rect.height() / s, time, soft: true, z: 1.0, fx: 0.0, fy: 0.0, ox: 0.0, oy: 0.0, gy: None, halo: false }
     }
     pub fn with_painter<'b>(&self, p: &'b Painter) -> Cx<'b> {
-        Cx { p, s: self.s, o: self.o, vh: self.vh, time: self.time, soft: self.soft, z: self.z, fx: self.fx, fy: self.fy, ox: self.ox, oy: self.oy, gy: self.gy }
+        Cx { p, s: self.s, o: self.o, vh: self.vh, time: self.time, soft: self.soft, z: self.z, fx: self.fx, fy: self.fy, ox: self.ox, oy: self.oy, gy: self.gy, halo: self.halo }
     }
     #[inline]
     pub fn k(&self) -> f32 {
@@ -164,6 +166,17 @@ impl<'a> Cx<'a> {
         self.poly(&pts, c);
     }
     /// soft radial glow (normal alpha blend)
+    /// soft dark backing behind a character (transparent mode only) - keeps light outfits readable on bright cameras
+    pub fn halo(&self, x: f32, y: f32, rx: f32, ry: f32) {
+        if !self.halo || !self.soft {
+            return;
+        }
+        let n = 5;
+        for i in 0..n {
+            let u = i as f32 / n as f32;
+            self.ellipse(x, y, rx * (1.0 - 0.45 * u), ry * (1.0 - 0.45 * u), rgba(10, 6, 24, 0.07));
+        }
+    }
     pub fn glow(&self, x: f32, y: f32, r: f32, c: Color32, a: f32) {
         if !self.soft || a <= 0.003 {
             return;
@@ -695,6 +708,12 @@ pub fn draw_character(cx: &Cx, sprites: &Sprites, x: f32, pose: &Pose, look: &Lo
     let t = cx.time;
     let rig = solve_rig(x, g, pose, k);
     let hr = HEAD_R * k;
+    {
+        // readability halo spans head..feet (transparent mode only)
+        let top = rig.head.1 - hr * 1.3;
+        let cy = (top + g) / 2.0;
+        cx.halo((rig.head.0 + x) / 2.0, cy, hr * 1.9, (g - top) / 2.0 + 14.0 * k);
+    }
     // palette per tier (tier 0/1 keep the viewer's own pastel colours)
     let (shirt, skirt) = match tier {
         0 | 1 => (look.shirt, look.pants),
@@ -994,7 +1013,131 @@ pub fn draw_lotus(cx: &Cx, x: f32, y: f32, sc: f32) {
 }
 
 /// Name banner above the character; `appear` drives an elastic bounce-in (0..1).
+type DeferredDraw = Box<dyn Fn(&Cx)>;
+/// a deferred tag: optional collision rect (world coords) + draw fn taking a (dx, dy) nudge
+struct TagEntry {
+    rect: Option<[f32; 4]>,
+    prio: f32,
+    draw: Box<dyn Fn(&Cx, f32, f32)>,
+}
+thread_local! {
+    /// While set, name tags are collected instead of drawn, so they can be painted on top of result cards.
+    static TAG_LAYER: std::cell::RefCell<Option<Vec<TagEntry>>> = const { std::cell::RefCell::new(None) };
+}
+/// Start collecting name tags (call before drawing the world).
+pub fn defer_tags_begin() {
+    TAG_LAYER.with(|l| *l.borrow_mut() = Some(vec![]));
+}
+fn overlaps(a: &[f32; 4], b: &[f32; 4]) -> bool {
+    a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
+}
+/// Find the smallest nudge that moves `r` clear of every rect in `placed` (prefers up, then sideways, small down).
+pub fn resolve_tag(r: [f32; 4], placed: &[[f32; 4]]) -> (f32, f32) {
+    let gap = 6.0;
+    let mut best = (0.0f32, 0.0f32);
+    for _ in 0..6 {
+        let cur = [r[0] + best.0, r[1] + best.1, r[2] + best.0, r[3] + best.1];
+        let Some(o) = placed.iter().find(|p| overlaps(&cur, p)) else {
+            return best;
+        };
+        let h = r[3] - r[1];
+        let mut cands = vec![
+            (0.0, o[1] - gap - cur[3]),                       // above it
+            (0.0, o[3] + gap - cur[1]),                       // below it
+            (o[0] - gap - cur[2], 0.0),                       // left of it
+            (o[2] + gap - cur[0], 0.0),                       // right of it
+        ];
+        // stay in frame; don't slide far down over the face
+        cands.retain(|(dx, dy)| {
+            let (x0, x1) = (cur[0] + dx, cur[2] + dx);
+            x0 >= 4.0 && x1 <= VW - 4.0 && cur[1] + dy >= 0.0 && *dy <= h * 0.7
+        });
+        let Some(c) = cands.into_iter().min_by(|a, b| {
+            let ka = a.0.abs() * 1.2 + a.1.abs() * if a.1 > 0.0 { 1.6 } else { 1.0 };
+            let kb = b.0.abs() * 1.2 + b.1.abs() * if b.1 > 0.0 { 1.6 } else { 1.0 };
+            ka.partial_cmp(&kb).unwrap_or(std::cmp::Ordering::Equal)
+        }) else {
+            return best;
+        };
+        best = (best.0 + c.0, best.1 + c.1);
+    }
+    best
+}
+/// Draw all collected name tags now (after cards), with the same camera as the world.
+/// Prominent tags (the active giver's banner) are placed first; smaller tags that would overlap get nudged.
+pub fn defer_tags_flush(cx: &Cx) {
+    let v = TAG_LAYER.with(|l| l.borrow_mut().take()).unwrap_or_default();
+    let mut order: Vec<usize> = (0..v.len()).filter(|&i| v[i].rect.is_some()).collect();
+    order.sort_by(|&a, &b| v[b].prio.partial_cmp(&v[a].prio).unwrap_or(std::cmp::Ordering::Equal));
+    let mut offs = vec![(0.0f32, 0.0f32); v.len()];
+    let mut placed: Vec<[f32; 4]> = vec![];
+    for i in order {
+        let r = v[i].rect.unwrap();
+        let d = resolve_tag(r, &placed);
+        offs[i] = d;
+        placed.push([r[0] + d.0, r[1] + d.1, r[2] + d.0, r[3] + d.1]);
+    }
+    for (e, d) in v.iter().zip(offs) {
+        (e.draw)(cx, d.0, d.1);
+    }
+}
+fn push_tag(cx: &Cx, rect: Option<[f32; 4]>, prio: f32, f: Box<dyn Fn(&Cx, f32, f32)>) {
+    let e = TagEntry { rect, prio, draw: f };
+    let e = TAG_LAYER.with(|l| match l.borrow_mut().as_mut() {
+        Some(v) => {
+            v.push(e);
+            None
+        }
+        None => Some(e),
+    });
+    if let Some(e) = e {
+        (e.draw)(cx, 0.0, 0.0);
+    }
+}
+/// Queue `f` on the tag layer if it is active, else draw immediately.
+pub fn on_tag_layer(cx: &Cx, f: DeferredDraw) {
+    push_tag(cx, None, 0.0, Box::new(move |cx, _, _| f(cx)));
+}
+
+/// geometry shared by layout + drawing: (clamped centre x, half width incl. ribbons, height)
+fn banner_geom(cx: &Cx, x: f32, name: &str, tier: usize, tier_name: &str, sc: f32) -> (f32, f32, f32) {
+    let size = [26.0, 28.0, 32.0, 36.0, 42.0][tier.min(4)] * sc;
+    let m = cx.measure(name, size, true);
+    let w = m.x + (36.0 + tier as f32 * 10.0) * sc;
+    let tails = if tier >= 3 { (40.0 + tier as f32 * 8.0) * sc } else { 0.0 };
+    let half = (w / 2.0 + tails).max(cx.measure(tier_name, 20.0, true).x / 2.0 + 16.0);
+    let pad = 12.0;
+    let x = if VW - 2.0 * pad > 2.0 * half { x.clamp(pad + half, VW - pad - half) } else { VW / 2.0 };
+    (x, half, size * 1.55)
+}
+
 pub fn draw_name_banner(cx: &Cx, x: f32, y: f32, name: &str, tier: usize, tier_name: &str, appear: f32, alpha: f32) {
+    let (name, tier_name) = (name.to_string(), tier_name.to_string());
+    let sc = ease_out_elastic(appear).max(0.0);
+    let rect = if sc > 0.02 && alpha > 0.05 {
+        let (cxm, half, h) = banner_geom(cx, x, &name, tier, &tier_name, sc);
+        let top = y - h - if tier_name.is_empty() { 0.0 } else { 26.0 };
+        Some([cxm - half, top, cxm + half, y + 4.0])
+    } else {
+        None
+    };
+    let prio = tier as f32 + if tier_name.is_empty() { 0.0 } else { 10.0 } + (y / 10_000.0);
+    push_tag(
+        cx,
+        rect,
+        prio,
+        Box::new(move |cx, dx, dy| {
+            if dx.abs() + dy.abs() > 0.5 && alpha > 0.02 {
+                // leader line from the nudged tag back to the character
+                let (cxm, _, _) = banner_geom(cx, x, &name, tier, &tier_name, sc.max(0.03));
+                cx.seg((cxm + dx, y + dy), (x, y), 2.0, rgba(255, 255, 255, 0.55 * alpha));
+            }
+            draw_name_banner_now(cx, x + dx, y + dy, &name, tier, &tier_name, appear, alpha)
+        }),
+    );
+}
+
+fn draw_name_banner_now(cx: &Cx, x: f32, y: f32, name: &str, tier: usize, tier_name: &str, appear: f32, alpha: f32) {
     let t = cx.time;
     let sc = ease_out_elastic(appear).max(0.0);
     if sc <= 0.02 || alpha <= 0.0 {
@@ -1003,7 +1146,8 @@ pub fn draw_name_banner(cx: &Cx, x: f32, y: f32, name: &str, tier: usize, tier_n
     let size = [26.0, 28.0, 32.0, 36.0, 42.0][tier.min(4)] * sc;
     let m = cx.measure(name, size, true);
     let w = m.x + (36.0 + tier as f32 * 10.0) * sc;
-    let h = size * 1.55;
+    // keep the whole tag (incl. tier-3+ ribbon tails and the tier-name ribbon) inside the frame
+    let (x, _, h) = banner_geom(cx, x, name, tier, tier_name, sc);
     let (x0, y0) = (x - w / 2.0, y - h);
     let a = alpha;
     match tier {
