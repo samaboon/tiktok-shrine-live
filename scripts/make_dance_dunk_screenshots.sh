@@ -67,6 +67,34 @@ run screenshots/dance queue_3         --config "$cfg_floor" --theme dance --demo
 run screenshots/dance queue_3_scene   --config "$cfg_floor" --theme dance --bg scene --demo "pray:1:มะลิ" --demo "pray:3:สมชาย" --demo "siamsi:5:เศรษฐีต้น" --seed 42 --shot-at 3.7
 run screenshots/dance idle_still_scene --config "$cfg_floor" --theme dance --bg scene --shot-at 3
 
+python3 - << 'PYF'
+import pathlib, re
+src = pathlib.Path("config.toml").read_text()
+src = re.sub(r'^check_on_start = .*', 'check_on_start = false', src, flags=re.M)
+combo = re.sub(r'^venue = .*', 'venue = "floor"', src, flags=re.M)
+combo = re.sub(r'^party_threshold = .*', 'party_threshold = 99', combo, count=1, flags=re.M)
+combo = re.sub(r'^merge_window = .*', 'merge_window = 30.0', combo, count=1, flags=re.M)
+pathlib.Path("/tmp/ddshot/dance_combo.toml").write_text(combo)
+pathlib.Path("/tmp/ddshot/dance_flood.toml").write_text(combo)
+party = re.sub(r'^venue = .*', 'venue = "floor"', src, flags=re.M)
+party = re.sub(r'^party_threshold = .*', 'party_threshold = 6', party, count=1, flags=re.M)
+pathlib.Path("/tmp/ddshot/dance_party.toml").write_text(party)
+PYF
+
+run screenshots/dance combo_xn --config /tmp/ddshot/dance_combo.toml --theme dance --bg scene \
+  --demo "pray:3:มะลิ" --demo "pray:3:มะลิ" --demo "pray:3:มะลิ" --demo "pray:3:มะลิ" --demo "pray:3:มะลิ" \
+  --seed 11 --shot-at 3.7
+run screenshots/dance flood_floor --config /tmp/ddshot/dance_flood.toml --theme dance --bg scene \
+  --demo "pray:1:มะลิ" --demo "pray:2:สมชาย" --demo "pray:1:นก" --demo "pray:3:ดาว" --demo "pray:2:ฝน" \
+  --demo "pray:1:ไผ่" --demo "pray:2:เจน" --demo "pray:1:ต้น" --demo "pray:3:มิ้น" --demo "pray:2:แพรว" \
+  --demo "pray:1:โอม" --demo "pray:2:บีม" --seed 42 --shot-at 3.7
+run screenshots/dance party --config /tmp/ddshot/dance_party.toml --theme dance --bg scene \
+  --demo "pray:1:มะลิ" --demo "pray:2:สมชาย" --demo "pray:1:นก" --demo "pray:3:ดาว" --demo "pray:2:ฝน" \
+  --demo "pray:1:ไผ่" --demo "pray:2:เจน" --demo "pray:1:ต้น" --demo "pray:3:มิ้น" --demo "pray:2:แพรว" \
+  --demo "pray:1:โอม" --demo "pray:2:บีม" --demo "pray:1:นุ่น" --demo "pray:2:เกล" --seed 7 --shot-at 2.8
+wait_shots
+
+
 python3 - << 'PY'
 import pathlib, re
 t = pathlib.Path("config.toml").read_text()
@@ -74,14 +102,14 @@ t = re.sub(r'^check_on_start = .*', 'check_on_start = false', t, flags=re.M)
 pathlib.Path("/tmp/ddshot/dunk.toml").write_text(t)
 PY
 DCFG=/tmp/ddshot/dunk.toml
-run screenshots/dunk t1_throw        --config "$DCFG" --theme dunk --demo "pray:1:มะลิ" --seed 11 --shot-at 2.1
-run screenshots/dunk t1_throw_scene  --config "$DCFG" --theme dunk --bg scene --demo "pray:1:มะลิ" --seed 11 --shot-at 2.1
-run screenshots/dunk t3_throw        --config "$DCFG" --theme dunk --demo "pray:3:สมชาย" --seed 33 --shot-at 3.0
-run screenshots/dunk t3_throw_scene  --config "$DCFG" --theme dunk --bg scene --demo "pray:3:สมชาย" --seed 33 --shot-at 3.0
+run screenshots/dunk t1_throw        --config "$DCFG" --theme dunk --demo "pray:1:มะลิ" --seed 11 --shot-at 2.0
+run screenshots/dunk t1_throw_scene  --config "$DCFG" --theme dunk --bg scene --demo "pray:1:มะลิ" --seed 11 --shot-at 2.0
+run screenshots/dunk t3_throw        --config "$DCFG" --theme dunk --demo "pray:3:สมชาย" --seed 33 --shot-at 2.65
+run screenshots/dunk t3_throw_scene  --config "$DCFG" --theme dunk --bg scene --demo "pray:3:สมชาย" --seed 33 --shot-at 2.65
 run screenshots/dunk t5_splash       --config "$DCFG" --theme dunk --demo "pray:5:จักรพรรดิเพชร" --seed 55 --shot-at 5.2
 run screenshots/dunk t5_splash_scene --config "$DCFG" --theme dunk --bg scene --demo "pray:5:จักรพรรดิเพชร" --seed 55 --shot-at 5.2
-run screenshots/dunk queue_3         --config "$DCFG" --theme dunk --demo "pray:1:มะลิ" --demo "pray:3:สมชาย" --demo "siamsi:2:นก" --seed 42 --shot-at 2.2
-run screenshots/dunk queue_3_scene   --config "$DCFG" --theme dunk --bg scene --demo "pray:1:มะลิ" --demo "pray:3:สมชาย" --demo "siamsi:2:นก" --seed 42 --shot-at 2.2
+run screenshots/dunk queue_3         --config "$DCFG" --theme dunk --demo "pray:1:มะลิ" --demo "pray:3:สมชาย" --demo "siamsi:2:นก" --seed 42 --shot-at 2.0
+run screenshots/dunk queue_3_scene   --config "$DCFG" --theme dunk --bg scene --demo "pray:1:มะลิ" --demo "pray:3:สมชาย" --demo "siamsi:2:นก" --seed 42 --shot-at 2.0
 
 wait_shots
 
@@ -110,6 +138,10 @@ gif dance_queue 0 9 12 --config "$cfg_floor" --theme dance --demo "pray:1:มะ
 gif dunk_t1 0 6 12 --config "$DCFG" --theme dunk --demo "pray:1:มะลิ" --seed 11
 gif dunk_t5 0 9 12 --config "$DCFG" --theme dunk --demo "pray:5:จักรพรรดิเพชร" --seed 55
 gif dunk_queue 0 7 12 --config "$DCFG" --theme dunk --demo "pray:1:มะลิ" --demo "pray:3:สมชาย" --demo "siamsi:2:นก" --seed 42
+gif dance_party 0 7 12 --config /tmp/ddshot/dance_party.toml --theme dance \
+  --demo "pray:1:มะลิ" --demo "pray:2:สมชาย" --demo "pray:1:นก" --demo "pray:3:ดาว" --demo "pray:2:ฝน" \
+  --demo "pray:1:ไผ่" --demo "pray:2:เจน" --demo "pray:1:ต้น" --demo "pray:3:มิ้น" --demo "pray:2:แพรว" \
+  --demo "pray:1:โอม" --demo "pray:2:บีม" --demo "pray:1:นุ่น" --demo "pray:2:เกล" --seed 7
 
 [ -n "${XPID:-}" ] && kill $XPID
 echo done

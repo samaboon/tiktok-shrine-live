@@ -132,6 +132,12 @@ pub struct DanceCfg {
     pub card_title: String,
     pub guide_label: String,
     pub max_visible: usize,
+    /// วินาทีสูงสุดต่อภารกิจ เมื่อรวมของขวัญซ้ำ (ค่าเริ่มต้น 20)
+    pub max_seconds: f32,
+    /// ช่วงวินาทีที่ของขวัญจากคนเดียวกันถูกรวมเป็นการ์ดเดียว (ค่าเริ่มต้น 4)
+    pub merge_window: f32,
+    /// จำนวนของขวัญในช่วง merge_window ที่จะเข้าโหมดปาร์ตี้ (ค่าเริ่มต้น 8)
+    pub party_threshold: u32,
     /// "auto" = สุ่มจากเวทีที่ปลดล็อกตามขั้น (เวทีใหญ่มีน้ำหนักมากกว่า)
     /// "random" = สุ่มเท่า ๆ กันจากเวทีที่ปลดล็อก
     /// หรือระบุคีย์เวที เช่น "floor", "stage", "cloud"
@@ -150,7 +156,10 @@ impl Default for DanceCfg {
             hint_text: String::new(),
             card_title: "ภารกิจเต้น!".into(),
             guide_label: "ตัวชี้ท่า".into(),
-            max_visible: 6,
+            max_visible: 8,
+            max_seconds: 20.0,
+            merge_window: 4.0,
+            party_threshold: 8,
             venue: "auto".into(),
             venues: vec![],
             challenges: vec![],
@@ -171,6 +180,12 @@ pub struct DunkCfg {
     pub splash_text: String,
     pub meter_target: u32,
     pub max_visible: usize,
+    /// วินาทีสูงสุดต่อรอบปา เมื่อรวมของขวัญซ้ำ (ค่าเริ่มต้น 20)
+    pub max_seconds: f32,
+    /// ช่วงวินาทีที่ของขวัญจากคนเดียวกันถูกรวมเป็นรอบเดียว (ค่าเริ่มต้น 4)
+    pub merge_window: f32,
+    /// จำนวนของขวัญในช่วง merge_window ที่จะเข้าโหมดปาร์ตี้ (ค่าเริ่มต้น 8)
+    pub party_threshold: u32,
     /// ขั้น (1-based) ที่ดังก์ทันที ค่าเริ่มต้น 5
     pub instant_dunk_tier: usize,
     pub meter_add: Vec<u32>,
@@ -186,6 +201,9 @@ impl Default for DunkCfg {
             splash_text: "SPLASH! ตกน้ำเพราะ {name}".into(),
             meter_target: 10,
             max_visible: 5,
+            max_seconds: 20.0,
+            merge_window: 4.0,
+            party_threshold: 8,
             instant_dunk_tier: 5,
             meter_add: vec![1, 2, 4, 7, 10],
             balls: vec![1, 2, 4, 7, 3],
@@ -416,6 +434,18 @@ impl Config {
             cfg.dance.countdown = def.dance.countdown.clone();
         }
         cfg.dance.max_visible = cfg.dance.max_visible.clamp(1, 12);
+        if cfg.dance.max_seconds <= 0.0 {
+            cfg.dance.max_seconds = def.dance.max_seconds;
+        }
+        cfg.dance.max_seconds = cfg.dance.max_seconds.clamp(4.0, 90.0);
+        if cfg.dance.merge_window <= 0.0 {
+            cfg.dance.merge_window = def.dance.merge_window;
+        }
+        cfg.dance.merge_window = cfg.dance.merge_window.clamp(0.4, 30.0);
+        if cfg.dance.party_threshold < 2 {
+            cfg.dance.party_threshold = def.dance.party_threshold;
+        }
+        cfg.dance.party_threshold = cfg.dance.party_threshold.clamp(2, 99);
         if cfg.dunk.hint_text.is_empty() {
             cfg.dunk.hint_text = def.dunk.hint_text.clone();
         }
@@ -439,6 +469,18 @@ impl Config {
         }
         cfg.dunk.meter_target = cfg.dunk.meter_target.max(1);
         cfg.dunk.max_visible = cfg.dunk.max_visible.clamp(1, 12);
+        if cfg.dunk.max_seconds <= 0.0 {
+            cfg.dunk.max_seconds = def.dunk.max_seconds;
+        }
+        cfg.dunk.max_seconds = cfg.dunk.max_seconds.clamp(4.0, 90.0);
+        if cfg.dunk.merge_window <= 0.0 {
+            cfg.dunk.merge_window = def.dunk.merge_window;
+        }
+        cfg.dunk.merge_window = cfg.dunk.merge_window.clamp(0.4, 30.0);
+        if cfg.dunk.party_threshold < 2 {
+            cfg.dunk.party_threshold = def.dunk.party_threshold;
+        }
+        cfg.dunk.party_threshold = cfg.dunk.party_threshold.clamp(2, 99);
         let mode = cfg.theme.mode.trim().to_lowercase();
         cfg.theme.mode = if mode == "krathong" || mode.contains("กระทง") {
             "krathong".into()

@@ -398,6 +398,7 @@ impl ShrineApp {
             return;
         }
         if theme == Theme::Dance {
+            self.dancers.set_flood(self.cfg.dance.merge_window, self.cfg.dance.max_seconds, self.cfg.dance.party_threshold);
             self.dancers.enqueue(
                 DanceIn { user, tier, tier_name, gift: String::new() },
                 &self.cfg.dance.challenges,
@@ -410,6 +411,7 @@ impl ShrineApp {
             return;
         }
         if theme == Theme::Dunk {
+            self.dunkers.set_flood(self.cfg.dunk.merge_window, self.cfg.dunk.max_seconds, self.cfg.dunk.party_threshold);
             self.dunkers.enqueue(
                 DunkIn { user, tier, tier_name, gift: String::new() },
                 self.cfg.dunk.meter_target,
@@ -627,6 +629,7 @@ impl ShrineApp {
         if theme == Theme::Dance {
             let before_s = self.dancers.started;
             let before_f = self.dancers.finished;
+            self.dancers.set_flood(self.cfg.dance.merge_window, self.cfg.dance.max_seconds, self.cfg.dance.party_threshold);
             self.dancers.tick(dt, self.cfg.dance.max_visible, &self.cfg.dance.countdown);
             self.shows_started += self.dancers.started.saturating_sub(before_s);
             self.shows_finished += self.dancers.finished.saturating_sub(before_f);
@@ -634,6 +637,7 @@ impl ShrineApp {
         if theme == Theme::Dunk {
             let before_s = self.dunkers.started;
             let before_f = self.dunkers.finished;
+            self.dunkers.set_flood(self.cfg.dunk.merge_window, self.cfg.dunk.max_seconds, self.cfg.dunk.party_threshold);
             self.dunkers.tick(dt, self.cfg.dunk.meter_target, &self.cfg.dunk.meter_add, &self.cfg.dunk.balls, self.cfg.dunk.instant_dunk_tier, self.cfg.dunk.max_visible);
             self.shows_started += self.dunkers.started.saturating_sub(before_s);
             self.shows_finished += self.dunkers.finished.saturating_sub(before_f);
@@ -1341,9 +1345,7 @@ impl ShrineApp {
             self.cats.draw_overlay(&ui_cx, &self.cfg.cat.thanks_title, self.cfg.timing.reveal_seconds);
         }
         if theme == Theme::Dance {
-            if self.dancers.lead().map(|s| s.tier >= 3).unwrap_or(false) {
-                shimmer(&ui_cx, 0.45);
-            }
+            // no screen-wide shimmer: it washed over the hero's face at t4–t5
             self.dancers.draw_overlay(&ui_cx, &self.cfg.dance.card_title, &self.cfg.dance.guide_label, sprites);
         }
         if theme == Theme::Dunk {
@@ -1711,7 +1713,10 @@ impl ShrineApp {
     fn draw_hud(&self, cx: &Cx) {
         let waiting: Vec<&str> = match self.theme() {
             Theme::Cat => self.cats.waiting_names(),
-            Theme::Dance => self.dancers.waiting_names(),
+            // party mode already has a scrolling name ticker — don't stack ถัดไป on top of it
+            Theme::Dance if self.dancers.in_party() => vec![],
+            Theme::Dance => self.dancers.hud_waiting_names(),
+            Theme::Dunk if self.dunkers.in_party() => vec![],
             Theme::Dunk => self.dunkers.waiting_names(),
             _ => self.queue.iter().map(|s| s.user.as_str()).collect(),
         };
@@ -1756,9 +1761,9 @@ impl ShrineApp {
             // cat mode: the result is always a thank-you card, never lucky numbers
             self.cats.shows().next().map(|s| serde_json::json!({"action": format!("{:?}", s.action), "theme": "cat", "user": s.user, "tier": s.tier + 1, "t": s.t, "phase": s.phase(rv), "card": "thanks"}))
         } else if self.theme() == Theme::Dance {
-            self.dancers.lead().map(|s| serde_json::json!({"action": "Pray", "theme": "dance", "user": s.user, "tier": s.tier + 1, "t": s.t, "phase": s.phase_name(), "card": "challenge", "venue": s.venue.key(), "challenge": s.challenge}))
+            self.dancers.lead().map(|s| serde_json::json!({"action": "Pray", "theme": "dance", "user": s.user, "tier": s.tier + 1, "t": s.t, "phase": if self.dancers.in_party() { "party" } else { s.phase_name() }, "card": if self.dancers.in_party() { "party" } else { "challenge" }, "venue": s.venue.key(), "challenge": s.challenge, "combo": s.combo, "party": self.dancers.in_party()}))
         } else if self.theme() == Theme::Dunk {
-            self.dunkers.lead().map(|s| serde_json::json!({"action": "Pray", "theme": "dunk", "user": s.user, "tier": s.tier + 1, "t": s.t, "phase": s.phase_name(), "card": if s.will_dunk { "splash" } else { "throw" }, "meter": self.dunkers.meter(), "dunk_by": self.dunkers.last_dunk_by()}))
+            self.dunkers.lead().map(|s| serde_json::json!({"action": "Pray", "theme": "dunk", "user": s.user, "tier": s.tier + 1, "t": s.t, "phase": if self.dunkers.in_party() { "party" } else { s.phase_name() }, "card": if self.dunkers.in_party() { "party" } else if s.will_dunk { "splash" } else { "throw" }, "meter": self.dunkers.meter(), "dunk_by": self.dunkers.last_dunk_by(), "combo": s.combo, "party": self.dunkers.in_party()}))
         } else {
             self.current.as_ref().map(|s| {
                 let card = match (s.action, s.theme) {
@@ -1820,6 +1825,26 @@ impl ShrineApp {
             "shows_started": self.shows_started,
             "shows_finished": self.shows_finished,
             "gifts_received": self.gifts_received,
+            "party": match self.theme() {
+                Theme::Dance => self.dancers.in_party(),
+                Theme::Dunk => self.dunkers.in_party(),
+                _ => false,
+            },
+            "combo": match self.theme() {
+                Theme::Dance => self.dancers.combo(),
+                Theme::Dunk => self.dunkers.combo(),
+                _ => 1,
+            },
+            "waiting_extra": match self.theme() {
+                Theme::Dance => self.dancers.waiting_extra(),
+                Theme::Dunk => self.dunkers.waiting_extra(),
+                _ => 0,
+            },
+            "live_units": match self.theme() {
+                Theme::Dance => self.dancers.live_units(),
+                Theme::Dunk => self.dunkers.live_units(),
+                _ => self.queue.len() + self.particles.len() + self.floating.len(),
+            },
             "settings_open": self.settings_open,
             "frame": self.frame,
             "time": self.time,
@@ -2422,6 +2447,18 @@ impl ShrineApp {
                 }
             }
         });
+        ui.horizontal(|ui| {
+            ui.label("นักเต้นบนจอสูงสุด");
+            ui.add(egui::DragValue::new(&mut self.cfg.dance.max_visible).range(1..=12));
+            ui.label("วินาทีสูงสุดต่อภารกิจ");
+            ui.add(egui::DragValue::new(&mut self.cfg.dance.max_seconds).range(4.0..=90.0).speed(0.5));
+        });
+        ui.horizontal(|ui| {
+            ui.label("ช่วงรวมของขวัญคนเดียวกัน (วินาที)");
+            ui.add(egui::DragValue::new(&mut self.cfg.dance.merge_window).range(0.4..=30.0).speed(0.1));
+            ui.label("เกณฑ์โหมดปาร์ตี้ (จำนวนของขวัญ)");
+            ui.add(egui::DragValue::new(&mut self.cfg.dance.party_threshold).range(2..=99));
+        });
         ui.label(format!("ภารกิจเต้น 1 บรรทัด = 1 ข้อ (ตอนนี้ {} ข้อ) ขั้น 4-5 จะสุ่มสองข้อมาต่อกัน", self.challenges_text.lines().filter(|l| !l.trim().is_empty()).count()));
         ui.add(egui::TextEdit::multiline(&mut self.challenges_text).desired_rows(8).desired_width(f32::INFINITY));
         ui.separator();
@@ -2443,6 +2480,18 @@ impl ShrineApp {
             ui.add(egui::DragValue::new(&mut self.cfg.dunk.meter_target).range(1..=99));
             ui.label("ขั้นที่ดังก์ทันที");
             ui.add(egui::DragValue::new(&mut self.cfg.dunk.instant_dunk_tier).range(1..=5));
+        });
+        ui.horizontal(|ui| {
+            ui.label("คนบนจอสูงสุด");
+            ui.add(egui::DragValue::new(&mut self.cfg.dunk.max_visible).range(1..=12));
+            ui.label("วินาทีสูงสุดต่อรอบปา");
+            ui.add(egui::DragValue::new(&mut self.cfg.dunk.max_seconds).range(4.0..=90.0).speed(0.5));
+        });
+        ui.horizontal(|ui| {
+            ui.label("ช่วงรวมของขวัญคนเดียวกัน (วินาที)");
+            ui.add(egui::DragValue::new(&mut self.cfg.dunk.merge_window).range(0.4..=30.0).speed(0.1));
+            ui.label("เกณฑ์โหมดปาร์ตี้ (จำนวนของขวัญ)");
+            ui.add(egui::DragValue::new(&mut self.cfg.dunk.party_threshold).range(2..=99));
         });
         self.sync_edit_buffers();
     }

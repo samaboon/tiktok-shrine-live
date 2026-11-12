@@ -136,11 +136,12 @@
 
 
 ### โหมดเต้น
-- `[dance]` ใน `config.toml`: `challenges` (1 บรรทัด = 1 ภารกิจ), `combo_joiner`, `countdown`, `venue` (`auto` / `random` / คีย์ฉาก), `venues`, `card_title`, `guide_label`
+- `[dance]` ใน `config.toml`: `challenges` (1 บรรทัด = 1 ภารกิจ), `combo_joiner`, `countdown`, `venue` (`auto` / `random` / คีย์ฉาก), `venues`, `card_title`, `guide_label`, `max_visible`, `max_seconds`, `merge_window`, `party_threshold`
+- ของขวัญซ้ำจากคนเดียวกันรวมเป็นการ์ดเดียว (ป้าย ×N) · ฟลอร์รวมขึ้นเต้นด้วยกันแล้วขึ้นป้าย «+N คนกำลังรอ» · ของขวัญถาโถมเข้า **โหมดปาร์ตี้** (ดิสโก้ + ภารกิจรวม + แถบชื่อเลื่อน)
 - ฉากที่มีในตัว: ฟลอร์รวม, ลานวัด/งานวัด, เต้นบนโต๊ะ, บนลำโพง, บนเวที, รถแห่เครื่องเสียง, บนดาดฟ้ายามค่ำ, เต้นใต้ฝนโฟม, บนเมฆ — ขั้นสูงปลดล็อกฉากใหญ่ขึ้น
 
 ### โหมดปาตกน้ำ
-- `[dunk]`: `meter_target` (ค่าเริ่มต้น 10), `instant_dunk_tier` (ค่าเริ่มต้น 5), `meter_add`, `balls`, `dunk_banner`, `splash_text` (ใช้ `{name}` แทนชื่อผู้ส่ง)
+- `[dunk]`: `meter_target` (ค่าเริ่มต้น 10), `instant_dunk_tier` (ค่าเริ่มต้น 5), `meter_add`, `balls`, `dunk_banner`, `splash_text` (ใช้ `{name}` แทนชื่อผู้ส่ง), `max_visible`, `max_seconds`, `merge_window`, `party_threshold` — รวมของขวัญซ้ำ (×N + ลูกเพิ่ม) และโหมดปาร์ตี้พร้อมแถบชื่อเลื่อนเมื่อของขวัญถาโถม
 
 ### โหมดพื้นหลัง / เลย์เอาต์
 | โปร่งใส | จอเขียว | หลัง Chroma Key | ฉากวัด | เต็มจอ 9:16 |

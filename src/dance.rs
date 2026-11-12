@@ -264,6 +264,8 @@ pub struct Show {
     pub seed: u64,
     pub x: f32,
     pub appear: f32,
+    pub combo: u32,
+    last_gift_at: f32,
 }
 
 impl Show {
@@ -304,10 +306,40 @@ struct Bit {
     s: f32,
 }
 
+struct Pending {
+    inn: DanceIn,
+    challenge: String,
+    moves: Vec<MoveKind>,
+    venue: Venue,
+    combo: u32,
+    last_gift_at: f32,
+}
+
+struct Party {
+    remain: f32,
+    challenge: String,
+    names: VecDeque<String>,
+    gifts: u32,
+    best_tier: usize,
+}
+
+const MAX_RECENT: usize = 64;
+const MAX_TICKER: usize = 48;
+const MAX_WAITING: usize = 24;
+const MAX_OVERFLOW_NAMES: usize = 64;
+const MAX_BITS: usize = 180;
+
 pub struct Stage {
     rng: fastrand::Rng,
     shows: VecDeque<Show>,
-    waiting: VecDeque<(DanceIn, String, Vec<MoveKind>, Venue)>,
+    waiting: VecDeque<Pending>,
+    overflow: VecDeque<String>,
+    overflow_extra: u32,
+    recent: VecDeque<(f32, String)>,
+    party: Option<Party>,
+    merge_window: f32,
+    max_seconds: f32,
+    party_threshold: u32,
     pub started: u64,
     pub finished: u64,
     bits: Vec<Bit>,
@@ -322,23 +354,67 @@ impl Default for Stage {
 
 impl Stage {
     pub fn new() -> Self {
-        Self { rng: fastrand::Rng::new(), shows: VecDeque::new(), waiting: VecDeque::new(), started: 0, finished: 0, bits: vec![], clock: 0.0 }
+        Self {
+            rng: fastrand::Rng::new(),
+            shows: VecDeque::new(),
+            waiting: VecDeque::new(),
+            overflow: VecDeque::new(),
+            overflow_extra: 0,
+            recent: VecDeque::new(),
+            party: None,
+            merge_window: 4.0,
+            max_seconds: 20.0,
+            party_threshold: 8,
+            started: 0,
+            finished: 0,
+            bits: vec![],
+            clock: 0.0,
+        }
     }
     pub fn with_seed(seed: u64) -> Self {
-        Self { rng: fastrand::Rng::with_seed(seed), shows: VecDeque::new(), waiting: VecDeque::new(), started: 0, finished: 0, bits: vec![], clock: 0.0 }
+        let mut s = Self::new();
+        s.rng = fastrand::Rng::with_seed(seed);
+        s
+    }
+    pub fn set_flood(&mut self, merge_window: f32, max_seconds: f32, party_threshold: u32) {
+        self.merge_window = merge_window.clamp(0.4, 30.0);
+        self.max_seconds = max_seconds.clamp(4.0, 90.0);
+        self.party_threshold = party_threshold.clamp(2, 99);
+    }
+    pub fn in_party(&self) -> bool {
+        self.party.is_some()
+    }
+    pub fn combo(&self) -> u32 {
+        self.shows.front().map(|s| s.combo).unwrap_or(1)
+    }
+    pub fn waiting_extra(&self) -> usize {
+        self.waiting.len() + self.overflow.len() + self.overflow_extra as usize
+    }
+    /// Bound on live records (for flood tests). Caps keep this from growing with gift spam.
+    pub fn live_units(&self) -> usize {
+        self.shows.len()
+            + self.waiting.len()
+            + self.overflow.len()
+            + self.recent.len()
+            + self.bits.len()
+            + self.party.as_ref().map(|p| p.names.len()).unwrap_or(0)
     }
     pub fn clear(&mut self) {
         self.shows.clear();
         self.waiting.clear();
+        self.overflow.clear();
+        self.overflow_extra = 0;
+        self.recent.clear();
+        self.party = None;
         self.bits.clear();
         self.started = 0;
         self.finished = 0;
     }
     pub fn busy(&self) -> bool {
-        !self.shows.is_empty() || !self.waiting.is_empty()
+        !self.shows.is_empty() || !self.waiting.is_empty() || !self.overflow.is_empty() || self.overflow_extra > 0 || self.party.is_some()
     }
     pub fn len(&self) -> usize {
-        self.shows.len() + self.waiting.len()
+        self.shows.len() + self.waiting_extra()
     }
     pub fn front_user(&self) -> Option<&str> {
         self.shows.front().map(|s| s.user.as_str())
@@ -351,8 +427,20 @@ impl Stage {
     }
     pub fn waiting_names(&self) -> Vec<&str> {
         let mut v: Vec<&str> = self.shows.iter().skip(1).map(|s| s.user.as_str()).collect();
-        v.extend(self.waiting.iter().map(|w| w.0.user.as_str()));
+        v.extend(self.waiting.iter().map(|w| w.inn.user.as_str()));
+        v.extend(self.overflow.iter().map(|s| s.as_str()));
         v
+    }
+    /// Names for the "ถัดไป" HUD. On ฟลอร์รวม everyone already on stage is dancing,
+    /// so only list senders still waiting off-stage.
+    pub fn hud_waiting_names(&self) -> Vec<&str> {
+        if self.active_venue() == Some(Venue::Floor) || self.party.is_some() {
+            let mut v: Vec<&str> = self.waiting.iter().map(|w| w.inn.user.as_str()).collect();
+            v.extend(self.overflow.iter().map(|s| s.as_str()));
+            v
+        } else {
+            self.waiting_names()
+        }
     }
     pub fn active_venue(&self) -> Option<Venue> {
         self.shows.front().map(|s| s.venue)
@@ -368,21 +456,186 @@ impl Stage {
         countdown: &[f32],
         max_visible: usize,
     ) {
+        self.note_gift(&inn.user);
+        let cap = max_visible.max(1).min(12);
+        let extend = (countdown_for(countdown, inn.tier) * 0.35).clamp(2.0, 6.0);
+
+        // same sender within the merge window → one card with ×N, longer (capped) time
+        if self.try_merge(&inn, extend) {
+            if self.recent_count() >= self.party_threshold as usize && self.party.is_none() {
+                self.enter_party(&inn, challenges, combo_joiner, countdown, cap);
+            }
+            return;
+        }
+
+        if self.party.is_some() || self.recent_count() >= self.party_threshold as usize {
+            self.enter_party(&inn, challenges, combo_joiner, countdown, cap);
+            self.place_party_dancer(inn, challenges, combo_joiner, countdown, cap);
+            return;
+        }
+
         let (challenge, moves) = pick_challenge(&mut self.rng, inn.tier, challenges, combo_joiner);
         let venue = pick_venue(venue_mode, venues, inn.tier, &mut self.rng);
-        let cap = max_visible.max(1).min(8);
         if self.shows.len() < cap {
             let show = self.make_show(inn, challenge, moves, venue, countdown);
             self.started += 1;
             self.shows.push_back(show);
         } else {
-            self.waiting.push_back((inn, challenge, moves, venue));
+            self.push_waiting(Pending { inn, challenge, moves, venue, combo: 1, last_gift_at: self.clock });
         }
+    }
+
+    fn note_gift(&mut self, user: &str) {
+        self.recent.push_back((self.clock, user.to_string()));
+        let cut = self.clock - self.merge_window.max(1.0);
+        while self.recent.front().map(|(t, _)| *t < cut).unwrap_or(false) {
+            self.recent.pop_front();
+        }
+        while self.recent.len() > MAX_RECENT {
+            self.recent.pop_front();
+        }
+    }
+
+    fn recent_count(&self) -> usize {
+        let cut = self.clock - self.merge_window.max(1.0);
+        self.recent.iter().filter(|(t, _)| *t >= cut).count()
+    }
+
+    fn try_merge(&mut self, inn: &DanceIn, extend: f32) -> bool {
+        let window = self.merge_window;
+        let cap_s = self.max_seconds;
+        let clock = self.clock;
+        if let Some(s) = self.shows.iter_mut().find(|s| s.user == inn.user && clock - s.last_gift_at <= window) {
+            s.combo = s.combo.saturating_add(1);
+            s.last_gift_at = clock;
+            s.dance = (s.dance + extend).min(cap_s);
+            if inn.tier > s.tier {
+                s.tier = inn.tier;
+                s.tier_name = inn.tier_name.clone();
+                s.look = appearance_for(&s.user, s.tier);
+            }
+            return true;
+        }
+        if let Some(w) = self.waiting.iter_mut().find(|w| w.inn.user == inn.user && clock - w.last_gift_at <= window) {
+            w.combo = w.combo.saturating_add(1);
+            w.last_gift_at = clock;
+            if inn.tier > w.inn.tier {
+                w.inn.tier = inn.tier;
+                w.inn.tier_name = inn.tier_name.clone();
+            }
+            return true;
+        }
+        false
+    }
+
+    fn ticker_push(names: &mut VecDeque<String>, user: &str) {
+        if names.back().map(|s| s == user).unwrap_or(false) {
+            return;
+        }
+        names.push_back(user.to_string());
+        while names.len() > MAX_TICKER {
+            names.pop_front();
+        }
+    }
+
+    fn enter_party(&mut self, inn: &DanceIn, challenges: &[String], combo_joiner: &str, countdown: &[f32], cap: usize) {
+        let extend = (countdown_for(countdown, inn.tier) * 0.35).clamp(2.0, 6.0);
+        if let Some(p) = &mut self.party {
+            p.gifts = p.gifts.saturating_add(1);
+            p.remain = (p.remain + extend).min(self.max_seconds);
+            p.best_tier = p.best_tier.max(inn.tier);
+            Self::ticker_push(&mut p.names, &inn.user);
+            return;
+        }
+        let mut names = VecDeque::new();
+        for s in &self.shows {
+            Self::ticker_push(&mut names, &s.user);
+        }
+        for w in &self.waiting {
+            Self::ticker_push(&mut names, &w.inn.user);
+        }
+        for o in &self.overflow {
+            Self::ticker_push(&mut names, o);
+        }
+        Self::ticker_push(&mut names, &inn.user);
+        let gifts = self.recent_count().max(1) as u32;
+        for s in &mut self.shows {
+            s.venue = Venue::Floor;
+        }
+        let challenge = if let Some(s) = self.shows.front() {
+            s.challenge.clone()
+        } else {
+            let (c, _) = pick_challenge(&mut self.rng, inn.tier, challenges, combo_joiner);
+            c
+        };
+        let remain = (12.0 + gifts as f32 * 0.35).clamp(8.0, self.max_seconds);
+        self.party = Some(Party { remain, challenge, names, gifts, best_tier: inn.tier });
+        let _ = cap;
+    }
+
+    fn place_party_dancer(&mut self, inn: DanceIn, challenges: &[String], combo_joiner: &str, countdown: &[f32], cap: usize) {
+        if self.shows.iter().any(|s| s.user == inn.user) {
+            return;
+        }
+        if self.waiting.iter().any(|w| w.inn.user == inn.user) {
+            return;
+        }
+        let (challenge, moves) = pick_challenge(&mut self.rng, inn.tier, challenges, combo_joiner);
+        if self.shows.len() < cap {
+            let mut show = self.make_show(inn, challenge, moves, Venue::Floor, countdown);
+            if show.t < show.walk {
+                // join mid-party: walk in, then dance
+            }
+            self.started += 1;
+            self.shows.push_back(show);
+        } else {
+            self.push_waiting(Pending { inn, challenge, moves, venue: Venue::Floor, combo: 1, last_gift_at: self.clock });
+        }
+    }
+
+    fn push_waiting(&mut self, pend: Pending) {
+        if self.waiting.len() < MAX_WAITING {
+            self.waiting.push_back(pend);
+            return;
+        }
+        // compact: keep the name, drop the bulky pending record
+        if self.overflow.len() < MAX_OVERFLOW_NAMES {
+            self.overflow.push_back(pend.inn.user);
+        } else {
+            self.overflow_extra = self.overflow_extra.saturating_add(1);
+        }
+    }
+
+    fn pop_waiting(&mut self, countdown: &[f32]) -> Option<(DanceIn, String, Vec<MoveKind>, Venue, u32)> {
+        if let Some(w) = self.waiting.pop_front() {
+            return Some((w.inn, w.challenge, w.moves, w.venue, w.combo));
+        }
+        if let Some(user) = self.overflow.pop_front() {
+            let inn = DanceIn { user, tier: 0, tier_name: "ขั้น1".into(), gift: String::new() };
+            let dance_t = countdown_for(countdown, 0);
+            let _ = dance_t;
+            return Some((inn, "เต้นตามจังหวะ".into(), vec![MoveKind::Wave], Venue::Floor, 1));
+        }
+        None
+    }
+
+    fn end_party(&mut self) {
+        let extra = self.waiting_extra() as u64;
+        self.waiting.clear();
+        self.overflow.clear();
+        self.overflow_extra = 0;
+        self.finished += extra;
+        for s in &mut self.shows {
+            if s.t < s.walk + s.dance {
+                s.t = s.walk + s.dance;
+            }
+        }
+        self.party = None;
     }
 
     fn make_show(&mut self, inn: DanceIn, challenge: String, moves: Vec<MoveKind>, venue: Venue, countdown: &[f32]) -> Show {
         let seed = self.rng.u64(..);
-        let dance = countdown_for(countdown, inn.tier);
+        let dance = countdown_for(countdown, inn.tier).min(self.max_seconds);
         let look = appearance_for(&inn.user, inn.tier);
         Show {
             user: inn.user,
@@ -400,39 +653,61 @@ impl Stage {
             seed,
             x: -80.0,
             appear: 0.0,
+            combo: 1,
+            last_gift_at: self.clock,
         }
     }
 
     pub fn tick(&mut self, dt: f32, max_visible: usize, countdown: &[f32]) {
         self.clock += dt;
-        let cap = max_visible.max(1).min(8);
-        // lead advances fully; backups freeze after walk-in
-        if let Some(lead) = self.shows.front_mut() {
-            lead.t += dt;
-            lead.appear = (lead.appear + dt / 0.35).min(1.0);
+        let cap = max_visible.max(1).min(12);
+        let in_party = self.party.is_some();
+        let floor_all = in_party || self.active_venue() == Some(Venue::Floor);
+
+        if let Some(p) = &mut self.party {
+            p.remain -= dt;
         }
-        for (i, s) in self.shows.iter_mut().enumerate() {
-            if i == 0 {
-                continue;
+
+        if in_party {
+            for s in &mut self.shows {
+                if s.t < s.walk {
+                    s.t = (s.t + dt).min(s.walk);
+                }
+                s.appear = (s.appear + dt / 0.35).min(1.0);
             }
-            if s.t < s.walk {
-                s.t = (s.t + dt).min(s.walk);
+            if self.party.as_ref().map(|p| p.remain <= 0.0).unwrap_or(false) {
+                self.end_party();
             }
-            s.appear = (s.appear + dt / 0.35).min(1.0);
-        }
-        if self.shows.front().map(|s| s.is_done()).unwrap_or(false) {
-            self.finished += 1;
-            self.shows.pop_front();
-            if let Some(next) = self.shows.front_mut() {
-                // already on the floor — start the countdown immediately
-                if next.t >= next.walk {
-                    next.t = next.walk;
+        } else {
+            // lead advances fully; backups walk in then hold (on ฟลอร์รวม they keep dancing visually via clock)
+            if let Some(lead) = self.shows.front_mut() {
+                lead.t += dt;
+                lead.appear = (lead.appear + dt / 0.35).min(1.0);
+            }
+            for (i, s) in self.shows.iter_mut().enumerate() {
+                if i == 0 {
+                    continue;
+                }
+                if s.t < s.walk {
+                    s.t = (s.t + dt).min(s.walk);
+                }
+                s.appear = (s.appear + dt / 0.35).min(1.0);
+            }
+            if self.shows.front().map(|s| s.is_done()).unwrap_or(false) {
+                self.finished += 1;
+                self.shows.pop_front();
+                if let Some(next) = self.shows.front_mut() {
+                    if next.t >= next.walk {
+                        next.t = next.walk;
+                    }
                 }
             }
         }
+
         while self.shows.len() < cap {
-            let Some((inn, challenge, moves, venue)) = self.waiting.pop_front() else { break };
-            let show = self.make_show(inn, challenge, moves, venue, countdown);
+            let Some((inn, challenge, moves, venue, combo)) = self.pop_waiting(countdown) else { break };
+            let mut show = self.make_show(inn, challenge, moves, if in_party || floor_all { Venue::Floor } else { venue }, countdown);
+            show.combo = combo.max(1);
             self.started += 1;
             self.shows.push_back(show);
         }
@@ -453,10 +728,13 @@ impl Stage {
             b.life -= dt;
         }
         self.bits.retain(|b| b.life > 0.0 && b.y < 2000.0);
+        while self.bits.len() > MAX_BITS {
+            self.bits.remove(0);
+        }
     }
 
     fn spawn_bits(&mut self, dt: f32, venue: Venue, tier: usize) {
-        let dancing = self.shows.front().map(|s| s.in_dance()).unwrap_or(false);
+        let dancing = self.party.is_some() || self.shows.front().map(|s| s.in_dance()).unwrap_or(false);
         if !dancing {
             return;
         }
@@ -506,13 +784,16 @@ impl Stage {
 
     pub fn draw_world(&self, cx: &Cx, pcx: &Cx, sprites: &Sprites, bg: &str, max_visible: usize) {
         let g = floor_y(cx.vh);
-        let venue = self.active_venue().unwrap_or(Venue::Floor);
-        let lead_tier = self.shows.front().map(|s| s.tier).unwrap_or(0);
-        let dancing = self.shows.front().map(|s| s.in_dance() || s.phase_name() == "leave").unwrap_or(false);
+        let venue = if self.party.is_some() { Venue::Floor } else { self.active_venue().unwrap_or(Venue::Floor) };
+        let lead_tier = self.party.as_ref().map(|p| p.best_tier).unwrap_or_else(|| self.shows.front().map(|s| s.tier).unwrap_or(0));
+        let dancing = self.party.is_some() || self.shows.front().map(|s| s.in_dance() || s.phase_name() == "leave").unwrap_or(false);
         if bg == "scene" {
             draw_venue_sky(cx, venue, lead_tier);
         }
         draw_venue_set(if bg == "scene" { cx } else { pcx }, venue, g, lead_tier, dancing, bg);
+        if self.party.is_some() {
+            draw_party_disco(cx, g, self.clock);
+        }
         // characters back-to-front (lead last)
         let n = self.shows.len().max(1);
         // draw backups first
@@ -583,8 +864,14 @@ impl Stage {
             p.expr = 1;
             p
         } else {
-            let mv = current_move(&s.moves, s.dance_t(), s.dance);
-            let mut p = pose_for(mv, s.dance_t(), (s.seed as f32) * 0.001 + i_hash(&s.user) as f32 * 0.01, is_lead);
+            let dance_t = if is_lead && self.party.is_none() {
+                s.dance_t()
+            } else {
+                // ฟลอร์รวม backups (and everyone in party) keep moving, not frozen on frame 0
+                self.clock + (s.seed as f32) * 0.01
+            };
+            let mv = current_move(&s.moves, dance_t, s.dance.max(0.5));
+            let mut p = pose_for(mv, dance_t, (s.seed as f32) * 0.001 + i_hash(&s.user) as f32 * 0.01, is_lead);
             // crab sidestep around the slot
             if mv == MoveKind::Crab {
                 // x is adjusted below
@@ -627,6 +914,12 @@ impl Stage {
     }
 
     pub fn draw_overlay(&self, cx: &Cx, card_title: &str, guide_label: &str, sprites: &Sprites) {
+        if let Some(p) = &self.party {
+            self.draw_party_overlay(cx, p);
+            self.draw_waiting_badge(cx);
+            return;
+        }
+        self.draw_waiting_badge(cx);
         let Some(s) = self.shows.front() else { return };
         if !s.in_dance() && s.phase_name() != "leave" {
             return;
@@ -640,21 +933,32 @@ impl Stage {
         if fade < 0.02 {
             return;
         }
-        // task card — top center, away from faces
+        // task card — wide, large type so the challenge stays readable on a phone overlay
         let remain = s.remain().ceil() as i32;
-        let card_w = 600.0;
+        let card_w = 1120.0;
         let card_x = VW * 0.5;
-        let card_y = 18.0;
-        let h = 156.0;
-        cx.rect(card_x - card_w * 0.5, card_y, card_x + card_w * 0.5, card_y + h, 18.0, rgba(12, 8, 28, 0.82 * fade));
-        cx.rect_line(card_x - card_w * 0.5, card_y, card_x + card_w * 0.5, card_y + h, 18.0, 3.0, rgba(255, 210, 80, 0.75 * fade));
-        cx.text(card_x, card_y + 22.0, Align2::CENTER_CENTER, card_title, 20.0, rgba(255, 230, 140, fade), true);
-        cx.text(card_x, card_y + 46.0, Align2::CENTER_CENTER, &format!("{} · {}", s.user, s.venue.label()), 18.0, rgba(255, 255, 255, fade), true);
-        // text_wrapped is center-aligned about x
-        cx.text_wrapped(card_x, card_y + 64.0, &s.challenge, 22.0, card_w - 48.0, rgba(255, 245, 210, fade), true);
+        let card_y = 10.0;
+        let h = 250.0;
+        cx.rect(card_x - card_w * 0.5, card_y, card_x + card_w * 0.5, card_y + h, 22.0, rgba(12, 8, 28, 0.88 * fade));
+        cx.rect_line(card_x - card_w * 0.5, card_y, card_x + card_w * 0.5, card_y + h, 22.0, 4.0, rgba(255, 210, 80, 0.85 * fade));
+        cx.text(card_x, card_y + 24.0, Align2::CENTER_CENTER, card_title, 26.0, rgba(255, 230, 140, fade), true);
+        // sender name is the second-most important line
+        cx.text(card_x, card_y + 62.0, Align2::CENTER_CENTER, &s.user, 40.0, rgba(255, 255, 255, fade), true);
+        if s.combo >= 2 {
+            let badge = format!("×{}", s.combo);
+            let nm = cx.measure(&s.user, 40.0, true);
+            let bx = card_x + nm.x * 0.5 + 48.0;
+            let by = card_y + 62.0;
+            cx.rect(bx - 38.0, by - 28.0, bx + 38.0, by + 28.0, 14.0, rgba(220, 40, 80, 0.95 * fade));
+            cx.rect_line(bx - 38.0, by - 28.0, bx + 38.0, by + 28.0, 14.0, 3.0, rgba(255, 230, 80, 0.95 * fade));
+            cx.text(bx, by, Align2::CENTER_CENTER, &badge, 36.0, rgba(255, 255, 255, fade), true);
+        }
+        cx.text(card_x, card_y + 96.0, Align2::CENTER_CENTER, s.venue.label(), 22.0, rgba(255, 220, 160, 0.9 * fade), true);
+        // challenge is the key info — large + bold, wraps inside the wide card
+        cx.text_wrapped(card_x, card_y + 116.0, &s.challenge, 48.0, card_w - 64.0, rgba(255, 245, 210, fade), true);
         let count = format!("{remain}");
-        let pulse = 1.0 + 0.06 * (cx.time * 8.0).sin();
-        cx.text(card_x, card_y + h - 24.0, Align2::CENTER_CENTER, &count, 34.0 * pulse, rgba(255, 90, 130, fade), true);
+        let pulse = 1.0 + 0.07 * (cx.time * 8.0).sin();
+        cx.text(card_x, card_y + h - 32.0, Align2::CENTER_CENTER, &count, 64.0 * pulse, rgba(255, 80, 120, fade), true);
 
         // guide character — right side, looping the move, labelled ตัวชี้ท่า
         let venue = s.venue;
@@ -683,6 +987,72 @@ impl Stage {
         let lw = m.x + 18.0;
         cx.rect(gx - lw * 0.5, ly - 16.0, gx + lw * 0.5, ly + 8.0, 8.0, rgba(40, 20, 70, 0.8 * fade));
         cx.text(gx, ly - 4.0, Align2::CENTER_CENTER, lab, 18.0, rgba(255, 220, 255, fade), true);
+    }
+
+    fn draw_waiting_badge(&self, cx: &Cx) {
+        let n = self.waiting_extra();
+        if n == 0 {
+            return;
+        }
+        let txt = format!("+{n} คนกำลังรอ");
+        let size = 32.0;
+        let m = cx.measure(&txt, size, true);
+        let x1 = VW - 24.0;
+        let y1 = cx.vh - 80.0;
+        let x0 = x1 - m.x - 40.0;
+        let y0 = y1 - 52.0;
+        cx.rect(x0, y0, x1, y1, 16.0, rgba(20, 8, 40, 0.82));
+        cx.rect_line(x0, y0, x1, y1, 16.0, 3.0, rgba(255, 200, 80, 0.9));
+        cx.text((x0 + x1) * 0.5, (y0 + y1) * 0.5, Align2::CENTER_CENTER, &txt, size, rgba(255, 255, 255, 1.0), true);
+    }
+
+    fn draw_party_overlay(&self, cx: &Cx, p: &Party) {
+        let card_w = 1120.0;
+        let card_x = VW * 0.5;
+        let card_y = 10.0;
+        let h = 230.0;
+        cx.rect(card_x - card_w * 0.5, card_y, card_x + card_w * 0.5, card_y + h, 22.0, rgba(20, 4, 40, 0.9));
+        cx.rect_line(card_x - card_w * 0.5, card_y, card_x + card_w * 0.5, card_y + h, 22.0, 5.0, rgba(255, 80, 200, 0.95));
+        let flash = 0.75 + 0.25 * (cx.time * 8.0).sin().abs();
+        cx.text(card_x, card_y + 28.0, Align2::CENTER_CENTER, "โหมดปาร์ตี้!", 40.0, rgba(255, 80, 200, flash), true);
+        cx.text_wrapped(card_x, card_y + 80.0, &p.challenge, 44.0, card_w - 64.0, rgba(255, 245, 210, 1.0), true);
+        let remain = p.remain.ceil() as i32;
+        let pulse = 1.0 + 0.07 * (cx.time * 8.0).sin();
+        cx.text(card_x, card_y + h - 36.0, Align2::CENTER_CENTER, &format!("{remain}"), 60.0 * pulse, rgba(255, 80, 120, 1.0), true);
+        // scrolling ticker of every sender in this flood
+        let line = if p.names.is_empty() {
+            String::new()
+        } else {
+            let joined = p.names.iter().cloned().collect::<Vec<_>>().join("   ·   ");
+            format!("{joined}   ·   {joined}")
+        };
+        if !line.is_empty() {
+            let y0 = cx.vh - 70.0;
+            cx.rect(-20.0, y0, VW + 20.0, y0 + 56.0, 0.0, rgba(10, 0, 30, 0.82));
+            let w = cx.measure(&line, 30.0, true).x.max(1.0);
+            let scroll = (cx.time * 140.0) % w;
+            cx.text(40.0 - scroll, y0 + 28.0, Align2::LEFT_CENTER, &line, 30.0, rgba(255, 230, 140, 1.0), true);
+            cx.text(40.0 - scroll + w, y0 + 28.0, Align2::LEFT_CENTER, &line, 30.0, rgba(255, 230, 140, 1.0), true);
+        }
+    }
+}
+
+fn draw_party_disco(cx: &Cx, g: f32, t: f32) {
+    let wash = hsv((t * 90.0) % 360.0, 0.65, 1.0);
+    cx.rect(-20.0, -20.0, VW + 20.0, g, 0.0, Color32::from_rgba_unmultiplied(wash.r(), wash.g(), wash.b(), 40));
+    for i in 0..6 {
+        let a = t * 1.4 + i as f32 * TAU / 6.0;
+        let (sn, cs) = a.sin_cos();
+        let col = hsv((t * 120.0 + i as f32 * 60.0) % 360.0, 0.8, 1.0);
+        let x = VW * 0.5 + cs * 80.0;
+        cx.seg((x, 40.0), (VW * 0.5 + cs * 420.0, g - 10.0 + sn * 20.0), 18.0, Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 55));
+        cx.glow(VW * 0.5 + cs * 300.0, g * 0.45, 90.0, col, 0.28);
+    }
+    for i in 0..16 {
+        let x = 40.0 + i as f32 * 80.0;
+        let pulse = 0.4 + 0.6 * ((t * 7.0 + i as f32 * 0.8).sin().abs());
+        cx.glow(x, 28.0, 22.0, rgba(255, 240, 160, 1.0), pulse);
+        cx.circle(x, 28.0, 5.0, rgba(255, 255, 220, pulse));
     }
 }
 
@@ -1356,6 +1726,48 @@ mod tests {
             assert!(s.t >= s.walk || s.t > 0.0);
         }
         assert_eq!(st.active_venue(), Some(Venue::Floor));
+    }
+
+    #[test]
+    fn same_sender_merges_into_combo_and_caps_time() {
+        let mut st = Stage::with_seed(2);
+        st.set_flood(4.0, 12.0, 99);
+        let ch = default_challenges();
+        for _ in 0..8 {
+            st.enqueue(inn("มะลิ", 0), &ch, " แล้วต่อด้วย ", "stage", &[], &DEFAULT_COUNTDOWN, 6);
+        }
+        assert_eq!(st.len(), 1, "repeats must merge, not enqueue 8 cards");
+        assert_eq!(st.lead().unwrap().combo, 8);
+        assert!(st.lead().unwrap().dance <= 12.0 + 0.001, "extended time is capped");
+        assert!(st.lead().unwrap().dance > DEFAULT_COUNTDOWN[0], "time still extends");
+    }
+
+    #[test]
+    fn floor_overflow_badge_and_party_mode() {
+        let mut st = Stage::with_seed(3);
+        st.set_flood(4.0, 20.0, 99);
+        let ch = default_challenges();
+        for i in 0..12 {
+            st.enqueue(inn(&format!("คน{i}"), 0), &ch, " แล้วต่อด้วย ", "floor", &[], &DEFAULT_COUNTDOWN, 8);
+        }
+        assert_eq!(st.shows().count(), 8, "up to max_visible dancers on the floor");
+        assert!(st.waiting_extra() >= 4, "the rest wait behind a +N badge");
+        assert!(!st.in_party());
+
+        let mut st = Stage::with_seed(4);
+        st.set_flood(4.0, 20.0, 6);
+        for i in 0..16 {
+            st.enqueue(inn(&format!("แฟน{i}"), 1), &ch, " แล้วต่อด้วย ", "stage", &[], &DEFAULT_COUNTDOWN, 8);
+        }
+        assert!(st.in_party(), "crossing the rate threshold enters โหมดปาร์ตี้");
+        assert!(st.shows().count() <= 8);
+        assert!(st.live_units() <= 200, "flood records stay bounded, got {}", st.live_units());
+        // drain: after the party timer, leftover waiters are cleared and dancers leave
+        st.tick(21.0, 8, &DEFAULT_COUNTDOWN);
+        assert!(!st.in_party());
+        st.tick(WALK + 2.0, 8, &DEFAULT_COUNTDOWN);
+        assert!(st.waiting_extra() == 0);
+        assert!(st.live_units() < 80);
     }
 
     #[test]
