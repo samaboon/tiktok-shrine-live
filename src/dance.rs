@@ -1191,12 +1191,12 @@ fn slot(venue: Venue, i: usize, n: usize, is_lead: bool, g: f32, time: f32, s: &
     let n = n.max(1);
     match venue {
         Venue::Floor => {
-            // crowded floor: spread everyone, leave the right margin for ตัวชี้ท่า
-            let span = 640.0;
-            let x0 = 200.0;
-            let x = if n == 1 { 560.0 } else { x0 + i as f32 * (span / (n as f32 - 1.0).max(1.0)) };
-            let gy = g + if is_lead { 0.0 } else { ((i as i32 % 2) as f32) * 10.0 };
-            (x.min(900.0), gy)
+            // packed floor: wider spacing + staggered depth so 8 name tags don't kiss
+            let x0 = 80.0;
+            let x1 = 880.0; // leave the right margin for ตัวชี้ท่า at ~1000
+            let x = if n == 1 { 560.0 } else { x0 + i as f32 * ((x1 - x0) / (n as f32 - 1.0).max(1.0)) };
+            let gy = g + if n <= 2 { 0.0 } else { ((i as i32 % 2) as f32) * 28.0 - 8.0 };
+            (x, gy)
         }
         Venue::TempleFair => {
             let x = if is_lead { 600.0 } else { 260.0 + (i as f32 - 1.0) * 160.0 };

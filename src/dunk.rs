@@ -708,7 +708,17 @@ impl Stage {
         for pop in &self.pops {
             let a = clamp01(pop.life / pop.max);
             let sc = 0.85 + 0.4 * (1.0 - a);
-            cx.text(pop.x, pop.y, Align2::CENTER_CENTER, pop.text, 42.0 * sc, rgba(255, 230, 80, a), true);
+            let size = 50.0 * sc;
+            let tw = cx.measure(pop.text, size, true);
+            cx.rect(
+                pop.x - tw.x * 0.5 - 14.0,
+                pop.y - size * 0.48,
+                pop.x + tw.x * 0.5 + 14.0,
+                pop.y + size * 0.42,
+                12.0,
+                rgba(15, 6, 0, 0.72 * a),
+            );
+            cx.text_o(pop.x, pop.y, Align2::CENTER_CENTER, pop.text, size, rgba(255, 235, 90, a), rgba(15, 6, 0, a), true);
         }
         let _ = max_visible;
     }
@@ -1020,20 +1030,10 @@ fn draw_dunk_sky(cx: &Cx, g: f32) {
         cx.rect(x0 + 14.0, g - 158.0, x1 - 14.0, g - 126.0, 6.0, rgba(40, 20, 20, 0.9));
         cx.text((x0 + x1) * 0.5, g - 142.0, Align2::CENTER_CENTER, "ปาเป้า", 18.0, rgba(255, 230, 120, 1.0), true);
     }
-    // crowd silhouettes along the mid-ground
-    for i in 0..28 {
-        let x = 140.0 + i as f32 * 28.0 + ((i * 17) % 9) as f32;
-        if x > 760.0 && x < 1060.0 {
-            continue; // leave a gap around the tank so the host stays readable
-        }
-        let h = 46.0 + ((i * 13) % 22) as f32;
-        let dark = rgba(28, 16, 40, 0.82);
-        cx.ellipse(x, g - 8.0 - h, 11.0, h, dark);
-        cx.circle(x, g - 8.0 - h * 2.0 + 8.0, 10.0 + ((i * 5) % 4) as f32, dark);
-    }
-    // ground
+    // ground first so the crowd can stand on it
     cx.rect(-20.0, g, VW + 20.0, cx.vh + 40.0, 0.0, rgba(70, 110, 55, 1.0));
     cx.rect(-20.0, g, VW + 20.0, g + 14.0, 0.0, rgba(50, 80, 40, 0.7));
+    draw_cheering_crowd(cx, g);
     // bunting + string lights across the top
     let yb = 36.0;
     cx.seg((0.0, yb + 8.0), (VW, yb + 18.0), 3.0, rgba(40, 20, 30, 0.7));
@@ -1058,6 +1058,78 @@ fn draw_dunk_sky(cx: &Cx, g: f32) {
         let pulse = 0.55 + 0.45 * ((cx.time * 5.0 + i as f32 * 0.7).sin().abs());
         cx.glow(x, y, 16.0, rgba(255, 230, 140, 1.0), pulse);
         cx.circle(x, y, 5.0, rgba(255, 240, 180, pulse));
+    }
+}
+
+
+fn draw_cheering_crowd(cx: &Cx, g: f32) {
+    // two staggered rows of people (head + shoulders, mixed colours, some arms up)
+    // not tall thin ovals — those read as a picket fence
+    let shirts = [
+        rgba(220, 50, 70, 1.0),
+        rgba(40, 110, 200, 1.0),
+        rgba(240, 180, 50, 1.0),
+        rgba(40, 160, 90, 1.0),
+        rgba(200, 70, 160, 1.0),
+        rgba(230, 100, 40, 1.0),
+        rgba(80, 70, 180, 1.0),
+        rgba(50, 160, 180, 1.0),
+    ];
+    let skins = [
+        rgba(240, 190, 150, 1.0),
+        rgba(210, 150, 110, 1.0),
+        rgba(160, 100, 70, 1.0),
+        rgba(250, 210, 180, 1.0),
+        rgba(120, 75, 50, 1.0),
+    ];
+    let hairs = [
+        rgba(30, 20, 18, 1.0),
+        rgba(60, 35, 20, 1.0),
+        rgba(20, 20, 25, 1.0),
+        rgba(90, 50, 30, 1.0),
+        rgba(200, 80, 40, 1.0),
+    ];
+    // back row then front row
+    for row in 0..2 {
+        let front = row == 1;
+        let n = if front { 18 } else { 16 };
+        for i in 0..n {
+            let span = if front { 36.0 } else { 40.0 };
+            let x = 150.0 + i as f32 * span + ((i * 19 + row * 11) % 13) as f32
+                + if front { 18.0 } else { 0.0 };
+            if x > 730.0 && x < 1080.0 {
+                continue; // gap around the tank / host
+            }
+            if x < 132.0 || x > 1260.0 {
+                continue; // leave the left booth clear
+            }
+            let scale = if front { 1.0 } else { 0.82 };
+            let shirt = shirts[(i + row * 3) % shirts.len()];
+            let skin = skins[(i * 3 + row) % skins.len()];
+            let hair = hairs[(i * 2 + row) % hairs.len()];
+            let foot = g - if front { 2.0 } else { 10.0 };
+            let body_h = 34.0 * scale;
+            let shoulder_y = foot - body_h;
+            let head_r = 9.5 * scale;
+            let head_y = shoulder_y - head_r * 0.85;
+            // torso / shoulders (wide, short)
+            cx.ellipse(x, shoulder_y + body_h * 0.42, 15.0 * scale, body_h * 0.58, shirt);
+            cx.rect(x - 13.0 * scale, shoulder_y + 4.0 * scale, x + 13.0 * scale, foot - 1.0, 6.0 * scale, shirt);
+            // head + hair
+            cx.circle(x, head_y, head_r, skin);
+            cx.ellipse(x, head_y - head_r * 0.45, head_r * 0.95, head_r * 0.62, hair);
+            // some raised arms (cheer)
+            if (i + row) % 3 != 2 {
+                let dir = if i % 2 == 0 { 1.0 } else { -1.0 };
+                let wave = (cx.time * 5.0 + i as f32 * 0.7).sin() * 8.0;
+                let ax = x + dir * (14.0 * scale);
+                let ay = shoulder_y + 6.0 * scale;
+                let hx = x + dir * (18.0 * scale + 2.0);
+                let hy = head_y - 16.0 * scale + wave;
+                cx.seg((ax, ay), (hx, hy), 4.0 * scale, skin);
+                cx.circle(hx, hy, 4.5 * scale, skin);
+            }
+        }
     }
 }
 
@@ -1114,13 +1186,16 @@ fn draw_tank(cx: &Cx, g: f32, drop: f32, flash: f32) {
         let p1 = (x - 54.0 + 108.0 * cs, seat_y + 108.0 * sn);
         cx.seg(p0, p1, 14.0, rgba(180, 100, 45, 1.0));
     }
-    // "ผู้ไลฟ์" sign on the seat post — host identity, stays readable while falling
-    let sx0 = x + tw + 22.0;
-    let sy0 = tank_top - 86.0;
-    cx.rect(sx0 + 20.0, sy0 + 70.0, sx0 + 28.0, tank_top + 8.0, 2.0, rgba(80, 60, 40, 1.0));
-    cx.rect(sx0, sy0, sx0 + 48.0 + 70.0, sy0 + 52.0, 8.0, rgba(30, 20, 40, 0.95));
-    cx.rect_line(sx0, sy0, sx0 + 118.0, sy0 + 52.0, 8.0, 3.0, rgba(255, 80, 170, 0.95));
-    cx.text(sx0 + 59.0, sy0 + 26.0, Align2::CENTER_CENTER, "ผู้ไลฟ์", 24.0, rgba(255, 230, 240, 1.0), true);
+    // "ผู้ไลฟ์" sign to the right of the seat — on-screen in the 540-wide top crop
+    // (screen x ≈ 404–450) and clear of the ball's path into the target on the left
+    let sx0 = x + 62.0;  // 962
+    let sx1 = sx0 + 108.0; // 1070, well left of the 1280 edge
+    let sy0 = tank_top - 74.0;
+    let sy1 = sy0 + 48.0;
+    cx.rect(sx0 + 46.0, sy1, sx0 + 54.0, seat_y + 2.0, 2.0, rgba(80, 60, 40, 1.0));
+    cx.rect(sx0, sy0, sx1, sy1, 8.0, rgba(30, 20, 40, 0.95));
+    cx.rect_line(sx0, sy0, sx1, sy1, 8.0, 3.0, rgba(255, 80, 170, 0.95));
+    cx.text((sx0 + sx1) * 0.5, (sy0 + sy1) * 0.5, Align2::CENTER_CENTER, "ผู้ไลฟ์", 24.0, rgba(255, 230, 240, 1.0), true);
     // target pad
     let tx = x - tw - 36.0;
     let ty = tank_top - 10.0;
