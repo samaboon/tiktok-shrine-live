@@ -36,13 +36,15 @@ max_plays_per_gift = 1
 "5655" = "pray"          # Rose (gift id)
 "TikTok" = "siamsi"
 "5269" = "siamsi"        # TikTok (gift id)
-"Finger Heart" = "siamsi"
-"Doughnut" = "pray"
-"Perfume" = "siamsi"
-"Hand Hearts" = "pray"
-"Galaxy" = "pray"
-"Lion" = "siamsi"
-"Universe" = "pray"
+"Finger Heart" = "siamsi"   # 5487, 5 เพชร
+"Doughnut" = "pray"         # 5879, 30 เพชร
+"Perfume" = "siamsi"        # 5658, 20 เพชร
+"Hand Heart" = "pray"       # 5660, 100 เพชร (ชื่อในแคตตาล็อกจริง ไม่ใช่ Hand Hearts)
+"5660" = "pray"             # Hand Heart (gift id)
+"Galaxy" = "pray"           # 11046, 1000 เพชร
+"Lion" = "siamsi"           # 6369, 29999 เพชร
+"TikTok Universe" = "pray"  # 9101, 44999 เพชร
+"9101" = "pray"             # TikTok Universe (gift id)
 
 [http]
 # เซิร์ฟเวอร์ภายในเครื่อง สำหรับทดสอบ / รับ webhook จาก TikFinity, Streamer.bot ฯลฯ

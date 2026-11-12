@@ -669,4 +669,36 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(dir);
     }
+
+    #[test]
+    fn default_mappings_exist_in_bundled_catalog() {
+        let cat = GiftCatalog::bundled().expect("bundled snapshot");
+        let builtin = crate::config::Config::builtin();
+        let example: crate::config::Config = toml::from_str(include_str!("../config.example.toml"))
+            .expect("config.example.toml must parse");
+        for (label, cfg) in [("config.toml", &builtin), ("config.example.toml", &example)] {
+            let sections = [
+                ("[gifts]", &cfg.gifts),
+                ("[krathong.gifts]", &cfg.krathong.gifts),
+                ("[cat.gifts]", &cfg.cat.gifts),
+            ];
+            for (section, map) in sections {
+                for key in map.keys() {
+                    assert!(
+                        cat.find_by_key(key).is_some(),
+                        "{label} {section} key {key:?} is not in the bundled catalog"
+                    );
+                }
+            }
+        }
+        assert!(cat.find_by_key("Hand Heart").is_some());
+        assert!(cat.find_by_key("5660").is_some());
+        assert!(cat.find_by_key("TikTok Universe").is_some());
+        assert_eq!(
+            cat.find_by_key("9101").map(|g| g.name.as_str()),
+            Some("TikTok Universe")
+        );
+        assert!(cat.find_by_key("Hand Hearts").is_none());
+        assert!(cat.find_by_key("Universe").is_none());
+    }
 }

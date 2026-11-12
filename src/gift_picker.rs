@@ -182,7 +182,10 @@ impl GiftPicker {
         ));
 
         let row_h = 56.0;
-        let max_h = 340.0;
+        let row_gap = 6.0;
+        let visible_body = 5.0;
+        // header + N complete body rows (no clipped last row)
+        let max_h = row_h * (1.0 + visible_body) + row_gap * visible_body;
         egui::ScrollArea::vertical()
             .id_salt("gift-catalog")
             .auto_shrink([false, false])

@@ -1868,7 +1868,7 @@ impl ShrineApp {
     // ------------------------------------------------------------------ settings window
     fn settings_ui(&mut self, ctx: &egui::Context) {
         let mut open = self.settings_open;
-        let vb = ViewportBuilder::default().with_title("ตั้งค่า - TikTok Shrine Live").with_inner_size([720.0, 860.0]).with_min_inner_size([480.0, 400.0]);
+        let vb = ViewportBuilder::default().with_title("ตั้งค่า - TikTok Shrine Live").with_inner_size([720.0, 900.0]).with_min_inner_size([480.0, 400.0]);
         ctx.show_viewport_immediate(ViewportId::from_hash_of("settings"), vb, |ui, _class| {
             let ctx = &ui.ctx().clone();
             if ctx.input(|i| i.viewport().close_requested()) {
