@@ -1,9 +1,10 @@
 //! Event sources: TikTok bridge (Node tiktok-live-connector), local HTTP (TikFinity / Streamer.bot / curl)
 //! and keyboard (handled inside the app). All sources implement [`EventSource`] and push [`Incoming`].
+use crate::gifts::{parse_gift_list_msg, GiftListMsg};
 use serde_json::Value;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
@@ -66,6 +67,7 @@ pub enum Incoming {
     Direct(DirectIn),
     Control(ControlCmd),
     Status(String),
+    GiftList(GiftListMsg),
 }
 
 /// Sender wrapper that also wakes the UI.
@@ -144,6 +146,9 @@ pub fn parse_json_event(v: &Value) -> Option<Incoming> {
     let typ = get_str(v, &["type", "event"]).unwrap_or_default().to_lowercase();
     if typ == "status" {
         return Some(Incoming::Status(get_str(v, &["status"]).unwrap_or_default()));
+    }
+    if typ == "gift_list" || typ == "gifts" || typ == "available_gifts" {
+        return Some(Incoming::GiftList(parse_gift_list_msg(v)));
     }
     if let Some(a) = get_str(v, &["action"]).and_then(|a| Action::parse(&a)) {
         let diamonds = get_u64(v, DIAMOND_KEYS).unwrap_or(1) * get_u64(v, REPEAT_KEYS).unwrap_or(1).max(1);
@@ -379,6 +384,7 @@ pub struct BridgeState {
     pub reconnect: Duration,
     pub generation: u64,
     pub child: Option<Child>,
+    pub stdin: Option<ChildStdin>,
     pub status: String,
 }
 pub type BridgeCtl = Arc<Mutex<BridgeState>>;
@@ -391,9 +397,21 @@ pub fn restart_bridge(ctl: &BridgeCtl, username: &str, sign_key: &str, node: &st
     st.node = node.trim().to_string();
     st.enabled = enabled;
     st.generation += 1;
+    st.stdin = None;
     if let Some(c) = st.child.as_mut() {
         let _ = c.kill();
     }
+}
+
+/// Ask the running bridge to call `fetchAvailableGifts` and emit a `gift_list` line.
+pub fn request_gift_list(ctl: &BridgeCtl) -> Result<(), String> {
+    let mut st = ctl.lock().unwrap();
+    let Some(si) = st.stdin.as_mut() else {
+        return Err("ยังไม่ได้เชื่อมตัวเชื่อม TikTok — ใส่ชื่อผู้ใช้ในแท็บ TikTok แล้วกดเชื่อมต่อก่อน".into());
+    };
+    writeln!(si, r#"{{"cmd":"refresh_gifts"}}"#)
+        .and_then(|_| si.flush())
+        .map_err(|e| format!("ส่งคำสั่งรีเฟรชไม่ได้: {e}"))
 }
 
 /// Runs `node bridge/bridge.js <username>` (tiktok-live-connector) and reads JSON lines from stdout.
@@ -441,7 +459,7 @@ impl EventSource for TikTokBridgeSource {
                         cmd.current_dir(dir);
                     }
                 }
-                cmd.stdout(Stdio::piped()).stderr(Stdio::inherit()).stdin(Stdio::null());
+                cmd.stdout(Stdio::piped()).stderr(Stdio::inherit()).stdin(Stdio::piped());
                 #[cfg(windows)]
                 {
                     use std::os::windows::process::CommandExt;
@@ -450,7 +468,12 @@ impl EventSource for TikTokBridgeSource {
                 match cmd.spawn() {
                     Ok(mut child) => {
                         let out = child.stdout.take();
-                        ctl.lock().unwrap().child = Some(child);
+                        let cin = child.stdin.take();
+                        {
+                            let mut st = ctl.lock().unwrap();
+                            st.child = Some(child);
+                            st.stdin = cin;
+                        }
                         if let Some(out) = out {
                             for line in BufReader::new(out).lines().map_while(Result::ok) {
                                 let line = line.trim();
@@ -476,7 +499,11 @@ impl EventSource for TikTokBridgeSource {
                                 }
                             }
                         }
-                        let child = ctl.lock().unwrap().child.take();
+                        let child = {
+                            let mut st = ctl.lock().unwrap();
+                            st.stdin = None;
+                            st.child.take()
+                        };
                         if let Some(mut c) = child {
                             let _ = c.wait();
                         }
@@ -532,6 +559,18 @@ mod tests {
         match parse_json_event(&v) {
             Some(Incoming::Gift(g)) => assert_eq!((g.gift_id, g.repeat), (5655, 7)),
             other => panic!("{other:?}"),
+        }
+    }
+    #[test]
+    fn gift_list_event_is_not_a_gift() {
+        let v: Value = serde_json::from_str(r#"{"type":"gift_list","source":"test","gifts":[{"id":5655,"name":"Rose","diamond_count":1,"image":"https://example.com/r.webp"}]}"#).unwrap();
+        match parse_json_event(&v) {
+            Some(Incoming::GiftList(m)) => {
+                assert_eq!(m.gifts.len(), 1);
+                assert_eq!(m.gifts[0].id, 5655);
+                assert_eq!(m.gifts[0].name, "Rose");
+            }
+            other => panic!("expected GiftList, got {other:?}"),
         }
     }
 }

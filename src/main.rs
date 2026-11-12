@@ -5,6 +5,8 @@ mod app;
 mod cat;
 mod config;
 mod events;
+mod gift_picker;
+mod gifts;
 mod krathong;
 mod scene;
 mod runtime;
@@ -271,6 +273,7 @@ fn main() -> eframe::Result<()> {
         reconnect: Duration::from_secs(cfg.tiktok.reconnect_seconds.max(3)),
         generation: 0,
         child: None,
+        stdin: None,
         status: String::new(),
     }));
 

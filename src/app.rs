@@ -2,6 +2,7 @@
 use crate::cat::{self, CatIn, Stage as CatStage};
 use crate::config::{digit_label, Config};
 use crate::events::{restart_bridge, Action, BridgeCtl, ControlCmd, DirectIn, GiftIn, Incoming};
+use crate::gift_picker::GiftPicker;
 use crate::krathong as kr;
 use crate::scene::*;
 use egui::{Align2, Color32, Key, Pos2, Vec2, ViewportBuilder, ViewportCommand, ViewportId, WindowLevel};
@@ -199,6 +200,7 @@ pub struct ShrineApp {
     flash_msg: (String, f32),
     pos_edit: Option<(f32, f32)>,
     pub updater: crate::updater::Updater,
+    gift_picker: GiftPicker,
 }
 
 pub struct AppInit {
@@ -234,6 +236,7 @@ impl ShrineApp {
         let sim_dt = if let Some((_, _, _, fps)) = &init.record { Some(1.0 / *fps as f32) } else { init.shot.as_ref().map(|_| 1.0 / 60.0) };
         let settings_tab = init.shot.as_ref().and_then(|s| s.settings_tab).unwrap_or(0);
         let theme = Theme::from_key(&cfg.theme.mode);
+        let gift_base = init.cfg_path.parent().unwrap_or(init.cfg_path.as_path()).to_path_buf();
         let mut app = Self {
             cats: match init.seed {
                 Some(s) => CatStage::with_seed(s.wrapping_add(0xCA7)),
@@ -280,6 +283,7 @@ impl ShrineApp {
             flash_msg: (String::new(), 0.0),
             pos_edit: None,
             updater: init.updater,
+            gift_picker: GiftPicker::new(gift_base),
         };
         app.load_gift_rows();
         for (a, tier, user) in init.demo {
@@ -390,6 +394,7 @@ impl ShrineApp {
     fn handle_incoming(&mut self, ev: Incoming, ctx: &egui::Context) {
         match ev {
             Incoming::Status(s) => self.status = s,
+            Incoming::GiftList(msg) => self.gift_picker.apply_live_list(msg),
             Incoming::Control(c) => match c {
                 ControlCmd::ClickThrough(v) => self.cfg.window.click_through = v.unwrap_or(!self.cfg.window.click_through),
                 ControlCmd::Background(b) => self.cfg.window.background = b,
@@ -1863,7 +1868,7 @@ impl ShrineApp {
     // ------------------------------------------------------------------ settings window
     fn settings_ui(&mut self, ctx: &egui::Context) {
         let mut open = self.settings_open;
-        let vb = ViewportBuilder::default().with_title("ตั้งค่า - TikTok Shrine Live").with_inner_size([600.0, 720.0]).with_min_inner_size([480.0, 400.0]);
+        let vb = ViewportBuilder::default().with_title("ตั้งค่า - TikTok Shrine Live").with_inner_size([720.0, 860.0]).with_min_inner_size([480.0, 400.0]);
         ctx.show_viewport_immediate(ViewportId::from_hash_of("settings"), vb, |ui, _class| {
             let ctx = &ui.ctx().clone();
             if ctx.input(|i| i.viewport().close_requested()) {
@@ -2105,7 +2110,9 @@ impl ShrineApp {
         } else if th == Theme::Cat {
             ui.label("โหมดให้อาหารแมวมีตารางของตัวเอง (ถ้าว่างจะใช้ตารางของโหมดไหว้พระ)");
         }
-        ui.label("ใส่ชื่อของขวัญภาษาอังกฤษตามที่ TikTok ใช้ (เช่น Rose, TikTok, Finger Heart) หรือเลข gift id");
+        ui.label("เลือกจากรายการด้านล่าง (รูป ชื่อ รหัส ราคาเพชร) หรือพิมพ์ชื่อภาษาอังกฤษ / เลข gift id ในตาราง");
+        let gp_changed = self.gift_picker.ui(ui, th, &mut self.gift_rows, &self.bridge);
+        let _ = gp_changed;
         let mut remove = None;
         egui::Grid::new("gifts").num_columns(3).striped(true).spacing([10.0, 8.0]).show(ui, |ui| {
             ui.label(egui::RichText::new("ของขวัญ / id").strong());

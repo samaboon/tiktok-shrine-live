@@ -42,7 +42,70 @@ conn.on(WebcastEvent.GIFT, (ev) => {
   } catch (e) { console.error('[bridge] gift parse error', e); }
 });
 
-conn.on(ControlEvent.CONNECTED, (s) => emit({ type: 'status', status: 'connected', room_id: s?.roomId ?? '' }));
+function giftImage(g) {
+  return g?.image?.url_list?.[0] || g?.icon?.url_list?.[0] || g?.image?.url || g?.icon?.url || g?.image || '';
+}
+
+function normalizeGifts(list) {
+  const arr = Array.isArray(list) ? list : (list?.gifts || list?.data?.gifts || []);
+  const seen = new Set();
+  const out = [];
+  for (const g of arr) {
+    const id = Number(g?.id || g?.gift_id || g?.giftId || 0);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      name: String(g?.name || g?.gift_name || g?.giftName || ''),
+      diamond_count: Number(g?.diamond_count ?? g?.diamondCount ?? g?.diamonds ?? 0),
+      image: String(giftImage(g) || ''),
+    });
+  }
+  return out;
+}
+
+async function emitGiftList(reason) {
+  try {
+    let list = conn.availableGifts;
+    if (!list || (Array.isArray(list) && list.length === 0)) {
+      list = await conn.fetchAvailableGifts();
+    }
+    const gifts = normalizeGifts(list);
+    emit({
+      type: 'gift_list',
+      source: 'tiktok-live-connector fetchAvailableGifts',
+      fetched_at: new Date().toISOString(),
+      reason: reason || 'connect',
+      gifts,
+    });
+  } catch (e) {
+    emit({
+      type: 'gift_list',
+      source: 'tiktok-live-connector fetchAvailableGifts',
+      fetched_at: new Date().toISOString(),
+      gifts: [],
+      error: String(e?.message || e),
+    });
+  }
+}
+
+// Settings window can write {"cmd":"refresh_gifts"} to stdin.
+import('node:readline').then(({ createInterface }) => {
+  const rl = createInterface({ input: process.stdin });
+  rl.on('line', (line) => {
+    const s = String(line || '').trim();
+    if (!s) return;
+    try {
+      const msg = JSON.parse(s);
+      if (msg?.cmd === 'refresh_gifts' || msg?.type === 'refresh_gifts') emitGiftList('refresh');
+    } catch { /* ignore non-JSON */ }
+  });
+}).catch(() => {});
+
+conn.on(ControlEvent.CONNECTED, (s) => {
+  emit({ type: 'status', status: 'connected', room_id: s?.roomId ?? '' });
+  emitGiftList('connect');
+});
 conn.on(ControlEvent.DISCONNECTED, () => { emit({ type: 'status', status: 'disconnected' }); process.exit(3); });
 conn.on(WebcastEvent.STREAM_END, () => { emit({ type: 'status', status: 'stream_end' }); process.exit(4); });
 conn.on(ControlEvent.ERROR, (e) => console.error('[bridge] error:', e?.message || e));

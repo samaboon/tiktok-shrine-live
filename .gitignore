@@ -10,3 +10,4 @@ config.local.toml
 /target-*
 screenshots/**/raw/
 .bin/
+/gifts-cache/
