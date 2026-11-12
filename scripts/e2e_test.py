@@ -152,6 +152,23 @@ def main():
         check('10 rapid gifts all queued in order', fans(s) == [f'fan{i}' for i in range(10)], f"queue_len={s['queue_len']} {fans(s)}")
         get('/control?clear=1')
 
+        # ---------------- 3 senders at once -> visible single-file line, front one plays, line advances
+        s = wait_for(lambda s: s['current'] is None, 15)
+        q = urllib.parse.quote
+        for u in ['ผู้ส่งA', 'ผู้ส่งB', 'ผู้ส่งC🌸']:
+            get(f'/gift?gift_name=Rose&user={q(u)}&diamonds=1')
+        s = wait_for(lambda s: s['current'] is not None and len(s['line']) == 2, 4)
+        time.sleep(1.2); s = state()
+        line = s['line']; xs = [e['x'] for e in line]
+        check('3 senders: front one plays, other two visible in line', s['current'] and s['current']['user'] == 'ผู้ส่งA' and [e['user'] for e in line] == ['ผู้ส่งB', 'ผู้ส่งC'], f"current={s['current'] and s['current']['user']} line={line}")
+        check('3 senders: line is single-file, no overlap (>=100 px apart, on screen)', len(xs) == 2 and xs[0] - xs[1] >= 100 and min(xs) >= 0, f'x={xs}')
+        check('emoji stripped from name label (no tofu)', any(e['user'] == 'ผู้ส่งC' for e in line))
+        s = wait_for(lambda s: s['current'] is not None and s['current']['user'] == 'ผู้ส่งB', 15)
+        check('3 senders: line advances (2nd sender steps up, 3rd moves forward)', s['current']['user'] == 'ผู้ส่งB' and [e['user'] for e in s['line']] == ['ผู้ส่งC'], f"line={s['line']}")
+        s = wait_for(lambda s: s['current'] is not None and s['current']['user'] == 'ผู้ส่งC', 15)
+        check('3 senders: each gets their own turn in order', s['current']['user'] == 'ผู้ส่งC' and s['line'] == [])
+        get('/control?clear=1')
+
         # ---------------- controls
         get('/control?layout=full'); s = wait_for(lambda s: s['layout'] == 'full')
         wfull = s['window_size']

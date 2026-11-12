@@ -48,6 +48,10 @@ run idle_still_krathong      --theme krathong --shot-at 3
 run idle_still_krathong_scene --bg scene --theme krathong --shot-at 3
 run idle_after_krathongs_scene --bg scene --theme krathong --demo "pray:1:มะลิ" --demo "pray:3:ต้น" --demo "siamsi:5:เฮง" --seed 7 --shot-at 52
 run playing_shrine_scene     --bg scene --demo "pray:3:เศรษฐีต้น" --seed 33 --shot-at 5.0
+MULTI=(--demo "pray:3:มะลิ" --demo "siamsi:2:สมชาย" --demo "pray:4:ต้นข้าว" --demo "pray:1:Nok" --seed 5)
+run multi_line_shrine_1      --bg scene "${MULTI[@]}" --shot-at 5.0
+run multi_line_shrine_2      --bg scene "${MULTI[@]}" --shot-at 9.5
+run multi_line_krathong      --bg scene --theme krathong "${MULTI[@]}" --shot-at 6.0
 # โหมดพื้นหลัง/เลย์เอาต์
 run mode_green_t5            --demo "pray:5:จักรพรรดิเพชร" --seed 55 --shot-at 10.2 --bg green
 run mode_green_krathong_t5   --theme krathong --demo "pray:5:จักรพรรดิเพชร" --seed 55 --shot-at 10.2 --bg green
