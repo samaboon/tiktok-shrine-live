@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 # ภาพตัวอย่างโหมดให้อาหารแมว (headless Linux + Xvfb) -> screenshots/cat/ และ previews/cat_*.gif
-# เวลาในเกม: เดินเข้าสูงสุด 2.4 วิ | เทอาหาร 1.15 วิ | กิน 2.25 วิ | แสดงผล 5+0.5*ระดับ วิ | เดินออก 1.65 วิ
+# เวลาในเกม: เดินเข้าสูงสุด 2.4 วิ | เทอาหาร 1.15 วิ | กิน 2.25 วิ | การ์ดขอบคุณ 5+0.5*ระดับ วิ | เดินออก 1.65 วิ
 set -u
 cd "$(dirname "$0")/.."
-BIN=${BIN:-${CARGO_TARGET_DIR:-./target}/release/tiktok-shrine-live}
-if [ ! -x "$BIN" ] && [ -x ./target/release/tiktok-shrine-live ]; then
-  BIN=./target/release/tiktok-shrine-live
+if [ -z "${BIN:-}" ]; then
+  if [ -x ./.bin/tiktok-shrine-live ]; then
+    BIN=./.bin/tiktok-shrine-live
+  elif [ -x "${CARGO_TARGET_DIR:-}/release/tiktok-shrine-live" ]; then
+    BIN=${CARGO_TARGET_DIR}/release/tiktok-shrine-live
+  elif [ -x ./target/release/tiktok-shrine-live ]; then
+    BIN=./target/release/tiktok-shrine-live
+  else
+    BIN=${CARGO_TARGET_DIR:-./target}/release/tiktok-shrine-live
+  fi
 fi
 OUT=screenshots/cat
 mkdir -p "$OUT/raw" previews

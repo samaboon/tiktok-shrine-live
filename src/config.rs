@@ -74,7 +74,7 @@ impl Default for KrathongCfg {
 pub struct CatCfg {
     pub hint_text: String,
     pub thanks_title: String,
-    /// gift -> action for this mode ("pray" = ให้อาหาร+ขอเลข, "siamsi" = แมวขอบคุณ). Empty = use [gifts]
+    /// gift -> action for this mode (both "pray" and "siamsi" feed the cat then show a thank-you card; no lucky numbers). Empty = use [gifts]
     pub gifts: BTreeMap<String, String>,
     pub thanks: Vec<String>,
     /// how many cats may be on screen at once (the one eating + the line waiting behind)

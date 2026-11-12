@@ -59,7 +59,7 @@ impl Theme {
             (Theme::Shrine, "siamsi") => "เสี่ยงเซียมซี",
             (Theme::Krathong, "pray") => "ลอยกระทงขอเลข",
             (Theme::Krathong, "siamsi") => "อธิษฐานรับคำอวยพร",
-            (Theme::Cat, "pray") => "ให้อาหารแมวขอเลข",
+            (Theme::Cat, "pray") => "ให้อาหารแมว",
             (Theme::Cat, "siamsi") => "แมวขอบคุณ",
             _ => "ไม่ทำอะไร",
         }
@@ -347,9 +347,7 @@ impl ShrineApp {
                 user,
                 tier,
                 tier_name,
-                numbers,
                 text,
-                stick_no: pick + 1,
             });
             return;
         }
@@ -1224,7 +1222,7 @@ impl ShrineApp {
             if self.cats.shows().next().map(|s| s.tier >= 4).unwrap_or(false) {
                 shimmer(&ui_cx, 0.55);
             }
-            self.cats.draw_overlay(&ui_cx, &self.cfg.numbers.title, &self.cfg.cat.thanks_title, self.cfg.timing.reveal_seconds);
+            self.cats.draw_overlay(&ui_cx, &self.cfg.cat.thanks_title, self.cfg.timing.reveal_seconds);
         }
         self.draw_hud(&ui_cx);
     }
