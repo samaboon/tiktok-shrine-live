@@ -99,6 +99,7 @@ def main():
     cfg = re.sub(r'(?m)^bind = .*', f'bind = "127.0.0.1:{PORT}"', cfg)
     cfg = re.sub(r'(?m)^check_on_start = .*', 'check_on_start = false', cfg)
     cfg = re.sub(r'(?m)^speed = .*', 'speed = 4.0', cfg)   # fast shows
+    cfg = re.sub(r'(?m)^wizard_done = .*', 'wizard_done = true', cfg)  # no first-run wizard during tests
     open(os.path.join(WORK, 'config.toml'), 'w', encoding='utf-8').write(cfg)
     env = dict(os.environ)
     log = open(os.path.join(WORK, 'app.log'), 'w')

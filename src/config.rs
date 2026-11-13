@@ -33,6 +33,23 @@ pub struct Config {
     pub dunk: DunkCfg,
     pub pet: PetCfg,
     pub update: UpdateCfg,
+    pub ui: UiCfg,
+}
+
+/// First-run wizard + simplicity switch for the settings window.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct UiCfg {
+    /// true once the first-run wizard was completed or skipped
+    pub wizard_done: bool,
+    /// hide advanced settings rows (tuning sliders, positions, API keys)
+    pub simple_mode: bool,
+}
+
+impl Default for UiCfg {
+    fn default() -> Self {
+        Self { wizard_done: false, simple_mode: false }
+    }
 }
 
 /// Gift-action map plus an optional baht-per-coin rate for the picker / docs.
@@ -461,6 +478,7 @@ impl Default for Config {
             dunk: DunkCfg::default(),
             pet: PetCfg::default(),
             update: UpdateCfg::default(),
+            ui: UiCfg::default(),
         }
     }
 }

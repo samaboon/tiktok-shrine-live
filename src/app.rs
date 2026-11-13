@@ -214,6 +214,9 @@ pub struct ShrineApp {
     pub running: bool,
     settings_open: bool,
     settings_tab: usize,
+    wizard_open: bool,
+    wizard_step: usize,
+    wizard_simple: bool,
     test_tier: usize,
     test_sender: String,
     test_repeat: u32,
@@ -280,6 +283,7 @@ impl ShrineApp {
         }
         let sim_dt = if let Some((_, _, _, fps)) = &init.record { Some(1.0 / *fps as f32) } else { init.shot.as_ref().map(|_| 1.0 / 60.0) };
         let settings_tab = init.shot.as_ref().and_then(|s| s.settings_tab).unwrap_or(0);
+        let wizard_open = wizard_should_open(cfg.ui.wizard_done, init.shot.is_some());
         let theme = Theme::from_key(&cfg.theme.mode);
         let gift_base = init.cfg_path.parent().unwrap_or(init.cfg_path.as_path()).to_path_buf();
         let mut app = Self {
@@ -326,6 +330,9 @@ impl ShrineApp {
             running: !init.start_stopped,
             settings_open: init.open_settings,
             settings_tab,
+            wizard_open,
+            wizard_step: 0,
+            wizard_simple: true,
             test_tier: 0,
             test_sender: String::new(),
             test_repeat: 1,
@@ -2398,6 +2405,93 @@ impl ShrineApp {
         self.settings_open = open;
     }
 
+    fn wizard_ui(&mut self, ctx: &egui::Context) {
+        let mut open = self.wizard_open;
+        let mut finish: Option<bool> = None;
+        let vb = ViewportBuilder::default().with_title("เริ่มต้นใช้งาน - TikTok Shrine Live").with_inner_size([620.0, 560.0]).with_min_inner_size([480.0, 420.0]);
+        ctx.show_viewport_immediate(ViewportId::from_hash_of("wizard"), vb, |ui, _class| {
+            let ctx = &ui.ctx().clone();
+            if ctx.input(|i| i.viewport().close_requested()) {
+                finish = Some(false);
+            }
+            egui::CentralPanel::default().show(ui, |ui| {
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(format!("ตัวช่วยเริ่มต้น · ขั้นที่ {}/3", self.wizard_step + 1)).size(15.0).weak());
+                ui.add_space(4.0);
+                match self.wizard_step {
+                    0 => {
+                        ui.heading("ชื่อช่อง TikTok ของคุณ");
+                        ui.add_space(6.0);
+                        ui.label("ใส่ชื่อช่องที่จะรับของขวัญ (ไม่ต้องมี @)");
+                        ui.add(egui::TextEdit::singleline(&mut self.cfg.tiktok.username).hint_text("เช่น mychannel").desired_width(320.0).font(egui::TextStyle::Heading));
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new("ยังไม่มีไลฟ์ / ยังไม่ใส่ก็ได้ — เว้นว่างแล้วใช้ปุ่มทดสอบของขวัญในหน้าตั้งค่าได้ทันที").small().weak());
+                    }
+                    1 => {
+                        ui.heading("เชื่อมต่อ TikTok LIVE");
+                        ui.add_space(6.0);
+                        ui.checkbox(&mut self.cfg.tiktok.enabled, "เชื่อมต่ออัตโนมัติทุกครั้งที่เปิดโปรแกรม");
+                        ui.add_space(6.0);
+                        if ui.add(egui::Button::new(egui::RichText::new("เชื่อมต่อ / เชื่อมต่อใหม่").size(18.0)).min_size(Vec2::new(260.0, 44.0))).clicked() {
+                            self.reconnect();
+                        }
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new(format!("สถานะ: {}", if self.status.is_empty() { "ยังไม่ได้เชื่อมต่อ" } else { &self.status })).size(16.0).strong());
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new("ต้องเปิดไลฟ์อยู่ก่อนจึงจะเชื่อมต่อได้ — ข้ามขั้นนี้ก่อนแล้วค่อยเชื่อมต่อในแท็บ TikTok ก็ได้").small().weak());
+                    }
+                    _ => {
+                        ui.heading("เลือกโหมดที่จะแสดงบนจอ");
+                        ui.add_space(6.0);
+                        let cur = self.theme();
+                        egui::Grid::new("wizard_modes").num_columns(2).spacing([10.0, 10.0]).show(ui, |ui| {
+                            for (th, label) in [(Theme::Shrine, "ไหว้พระ / เสี่ยงเซียมซี"), (Theme::Krathong, "ลอยกระทง"), (Theme::Cat, "ให้อาหารแมว"), (Theme::Dance, "โหมดเต้น"), (Theme::Dunk, "ปาตกน้ำ"), (Theme::Pet, "เลี้ยงแมว (อนิเมะ)")] {
+                                let sel = cur == th;
+                                let b = egui::Button::new(egui::RichText::new(label).size(16.0).strong().color(if sel { Color32::WHITE } else { Color32::LIGHT_GRAY })).fill(if sel { Color32::from_rgb(170, 110, 20) } else { Color32::from_gray(50) }).min_size(Vec2::new(270.0, 44.0)).corner_radius(10);
+                                if ui.add(b).clicked() && !sel {
+                                    self.sync_edit_buffers();
+                                    self.cfg.theme.mode = th.key().into();
+                                    self.load_gift_rows();
+                                }
+                                ui.end_row();
+                            }
+                        });
+                        ui.add_space(8.0);
+                        ui.checkbox(&mut self.wizard_simple, "เปิดโหมดง่าย (ซ่อนตั้งค่าขั้นสูง — สลับภายหลังได้ในแท็บเริ่ม/หยุด)");
+                    }
+                }
+                ui.add_space(14.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button(egui::RichText::new("ข้าม").size(16.0)).clicked() {
+                        finish = Some(false);
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if self.wizard_step == 2 {
+                            if ui.add(egui::Button::new(egui::RichText::new("เริ่มใช้งาน").size(18.0).strong()).min_size(Vec2::new(150.0, 42.0))).clicked() {
+                                finish = Some(true);
+                            }
+                        } else if ui.add(egui::Button::new(egui::RichText::new("ถัดไป").size(18.0).strong()).min_size(Vec2::new(120.0, 42.0))).clicked() {
+                            self.wizard_step += 1;
+                        }
+                        if self.wizard_step > 0 && ui.button(egui::RichText::new("ย้อนกลับ").size(16.0)).clicked() {
+                            self.wizard_step -= 1;
+                        }
+                    });
+                });
+            });
+        });
+        if let Some(apply_simple) = finish {
+            self.cfg.ui.wizard_done = true;
+            if apply_simple {
+                self.cfg.ui.simple_mode = self.wizard_simple;
+            }
+            self.save_config(ctx);
+            open = false;
+        }
+        self.wizard_open = open;
+    }
+
     fn settings_contents(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let tabs = ["เริ่ม/หยุด", "TikTok", "หน้าจอ", "ของขวัญ", "เรทราคา", "เลข/คำทำนาย", "ทดสอบ", "อัปเดต"];
         ui.horizontal_wrapped(|ui| {
@@ -2481,6 +2575,14 @@ impl ShrineApp {
             ui.label("Delete = ล้างคิว   Ctrl+Q (Mac: Cmd+Q) = ปิดโปรแกรม   ลากหน้าต่างเพื่อย้ายตำแหน่ง");
         });
         ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            if ui.button(egui::RichText::new("เปิดตัวช่วยเริ่มต้น (3 ขั้น)").size(16.0)).clicked() {
+                self.wizard_step = 0;
+                self.wizard_open = true;
+            }
+            ui.checkbox(&mut self.cfg.ui.simple_mode, "โหมดง่าย (ซ่อนตั้งค่าขั้นสูง)");
+        });
+        ui.add_space(10.0);
         ui.vertical_centered(|ui| {
             if ui.add(egui::Button::new(egui::RichText::new("ปิดโปรแกรม").size(18.0)).min_size(Vec2::new(200.0, 40.0))).clicked() {
                 ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Close);
@@ -2497,9 +2599,11 @@ impl ShrineApp {
             ui.label("เชื่อมต่ออัตโนมัติ");
             ui.checkbox(&mut self.cfg.tiktok.enabled, "เปิด");
             ui.end_row();
-            ui.label("EulerStream API key");
-            ui.add(egui::TextEdit::singleline(&mut self.cfg.tiktok.sign_api_key).password(true).hint_text("ไม่บังคับ").desired_width(260.0));
-            ui.end_row();
+            if !self.cfg.ui.simple_mode {
+                ui.label("EulerStream API key");
+                ui.add(egui::TextEdit::singleline(&mut self.cfg.tiktok.sign_api_key).password(true).hint_text("ไม่บังคับ").desired_width(260.0));
+                ui.end_row();
+            }
         });
         ui.horizontal(|ui| {
             if ui.add(egui::Button::new(egui::RichText::new("เชื่อมต่อ / เชื่อมต่อใหม่").size(17.0)).min_size(Vec2::new(240.0, 38.0))).clicked() {
@@ -2510,14 +2614,16 @@ impl ShrineApp {
         ui.separator();
         ui.label("ต้องเปิดไลฟ์อยู่ก่อนถึงจะเชื่อมต่อได้ (ตัวเชื่อม TikTok มากับโปรแกรมแล้ว ไม่ต้องติดตั้งอะไรเพิ่ม)");
         ui.label(format!("หรือใช้ TikFinity / Streamer.bot ส่ง Webhook มาที่ http://{}/event", self.cfg.http.bind));
-        egui::CollapsingHeader::new("ขั้นสูง").id_salt("tt_adv").show(ui, |ui| {
-            ui.label(format!("ตัวรันตัวเชื่อม: {}", crate::runtime::describe(&self.cfg.tiktok.node_command)));
-            ui.horizontal(|ui| {
-                ui.label("ตำแหน่ง Node.js เอง");
-                ui.add(egui::TextEdit::singleline(&mut self.cfg.tiktok.node_command).hint_text("เว้นว่าง = อัตโนมัติ").desired_width(260.0));
+        if !self.cfg.ui.simple_mode {
+            egui::CollapsingHeader::new("ขั้นสูง").id_salt("tt_adv").show(ui, |ui| {
+                ui.label(format!("ตัวรันตัวเชื่อม: {}", crate::runtime::describe(&self.cfg.tiktok.node_command)));
+                ui.horizontal(|ui| {
+                    ui.label("ตำแหน่ง Node.js เอง");
+                    ui.add(egui::TextEdit::singleline(&mut self.cfg.tiktok.node_command).hint_text("เว้นว่าง = อัตโนมัติ").desired_width(260.0));
+                });
+                ui.label(egui::RichText::new("ปกติไม่ต้องใส่ — ใช้เมื่ออยากใช้ Node.js ของตัวเองแทนตัวที่มากับโปรแกรม").small().weak());
             });
-            ui.label(egui::RichText::new("ปกติไม่ต้องใส่ — ใช้เมื่ออยากใช้ Node.js ของตัวเองแทนตัวที่มากับโปรแกรม").small().weak());
-        });
+        }
     }
 
     fn tab_window(&mut self, ui: &mut egui::Ui) {
@@ -2539,21 +2645,23 @@ impl ShrineApp {
             ui.label("ขนาดจริง");
             ui.label(format!("{w} x {h} px"));
             ui.end_row();
-            ui.label("ตำแหน่ง X / Y");
-            let pe = self.pos_edit.get_or_insert((self.cfg.window.x.unwrap_or(100.0), self.cfg.window.y.unwrap_or(60.0)));
-            let mut moved = false;
-            ui.horizontal(|ui| {
-                ui.add(egui::DragValue::new(&mut pe.0).speed(2.0));
-                ui.add(egui::DragValue::new(&mut pe.1).speed(2.0));
-                moved = ui.button("ย้าย").clicked();
-            });
-            if moved {
-                let p = *pe;
-                self.cfg.window.x = Some(p.0);
-                self.cfg.window.y = Some(p.1);
-                ui.ctx().send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::OuterPosition(Pos2::new(p.0, p.1)));
+            if !self.cfg.ui.simple_mode {
+                ui.label("ตำแหน่ง X / Y");
+                let pe = self.pos_edit.get_or_insert((self.cfg.window.x.unwrap_or(100.0), self.cfg.window.y.unwrap_or(60.0)));
+                let mut moved = false;
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut pe.0).speed(2.0));
+                    ui.add(egui::DragValue::new(&mut pe.1).speed(2.0));
+                    moved = ui.button("ย้าย").clicked();
+                });
+                if moved {
+                    let p = *pe;
+                    self.cfg.window.x = Some(p.0);
+                    self.cfg.window.y = Some(p.1);
+                    ui.ctx().send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::OuterPosition(Pos2::new(p.0, p.1)));
+                }
+                ui.end_row();
             }
-            ui.end_row();
             ui.label("พื้นหลัง");
             ui.vertical(|ui| {
                 ui.radio_value(&mut self.cfg.window.background, "scene".to_string(), "ฉากเต็ม (วัด / แม่น้ำยามค่ำ / มุมแมว / เวทีเต้น / ถังดังก์)");
@@ -2571,13 +2679,15 @@ impl ShrineApp {
             ui.label("คลิกทะลุหน้าต่าง");
             ui.checkbox(&mut self.cfg.window.click_through, "(F8 สลับ)");
             ui.end_row();
-            ui.label("ตอนว่าง (ไม่มีของขวัญ)");
-            ui.vertical(|ui| {
-                ui.radio_value(&mut self.cfg.window.idle, "still".to_string(), "ภาพนิ่ง (ค่าเริ่มต้น)");
-                ui.radio_value(&mut self.cfg.window.idle, "ambient".to_string(), "ขยับเบา ๆ (เปลวเทียน ควันธูป)");
-                ui.radio_value(&mut self.cfg.window.idle, "hidden".to_string(), "ซ่อน (โปร่งใสทั้งหมด)");
-            });
-            ui.end_row();
+            if !self.cfg.ui.simple_mode {
+                ui.label("ตอนว่าง (ไม่มีของขวัญ)");
+                ui.vertical(|ui| {
+                    ui.radio_value(&mut self.cfg.window.idle, "still".to_string(), "ภาพนิ่ง (ค่าเริ่มต้น)");
+                    ui.radio_value(&mut self.cfg.window.idle, "ambient".to_string(), "ขยับเบา ๆ (เปลวเทียน ควันธูป)");
+                    ui.radio_value(&mut self.cfg.window.idle, "hidden".to_string(), "ซ่อน (โปร่งใสทั้งหมด)");
+                });
+                ui.end_row();
+            }
             ui.label("แสดงคำแนะนำ");
             ui.checkbox(&mut self.cfg.window.show_hint, "");
             ui.end_row();
@@ -2594,12 +2704,14 @@ impl ShrineApp {
             ui.label("แสดงสถานะการเชื่อมต่อ");
             ui.checkbox(&mut self.cfg.window.show_status, "");
             ui.end_row();
-            ui.label("ความเร็วแอนิเมชัน");
-            ui.add(egui::Slider::new(&mut self.cfg.timing.speed, 0.5..=2.0).suffix(" x"));
-            ui.end_row();
-            ui.label("เวลาแสดงผล (วินาที)");
-            ui.add(egui::Slider::new(&mut self.cfg.timing.reveal_seconds, 2.0..=15.0));
-            ui.end_row();
+            if !self.cfg.ui.simple_mode {
+                ui.label("ความเร็วแอนิเมชัน");
+                ui.add(egui::Slider::new(&mut self.cfg.timing.speed, 0.5..=2.0).suffix(" x"));
+                ui.end_row();
+                ui.label("เวลาแสดงผล (วินาที)");
+                ui.add(egui::Slider::new(&mut self.cfg.timing.reveal_seconds, 2.0..=15.0));
+                ui.end_row();
+            }
         });
         ui.label("เคล็ดลับ: เปิดคลิกทะลุแล้วจะลากหน้าต่างไม่ได้ ให้ปิดก่อนแล้วค่อยลากย้าย");
     }
@@ -2946,26 +3058,28 @@ impl ShrineApp {
             ui.label("ป้ายคำอธิบาย");
             ui.text_edit_singleline(&mut self.cfg.pet.guide_label);
         });
-        ui.horizontal(|ui| {
-            ui.label("เริ่มเหงาหลังไม่มีคนเล่น (วินาที)");
-            ui.add(egui::DragValue::new(&mut self.cfg.pet.lonely_after).range(2.0..=600.0).speed(1.0));
-            ui.label("เหงาเพิ่ม/วินาที");
-            ui.add(egui::DragValue::new(&mut self.cfg.pet.lonely_rate).range(0.0..=40.0).speed(0.1));
-        });
-        ui.horizontal(|ui| {
-            ui.label("อิ่มลด/วินาที");
-            ui.add(egui::DragValue::new(&mut self.cfg.pet.hungry_rate).range(0.0..=40.0).speed(0.1));
-            ui.label("ระดับผูกพันสูงสุด");
-            ui.add(egui::DragValue::new(&mut self.cfg.pet.max_level).range(1..=5));
-        });
-        ui.horizontal(|ui| {
-            ui.label("คิวสูงสุด");
-            ui.add(egui::DragValue::new(&mut self.cfg.pet.max_queue).range(1..=200));
-            ui.label("ช่วงรวมของขวัญคนเดียวกัน (วินาที)");
-            ui.add(egui::DragValue::new(&mut self.cfg.pet.merge_window).range(0.0..=30.0).speed(0.1));
-            ui.label("วินาทีสูงสุดต่อกิมมิก");
-            ui.add(egui::DragValue::new(&mut self.cfg.pet.max_seconds).range(2.0..=90.0).speed(0.5));
-        });
+        if !self.cfg.ui.simple_mode {
+            ui.horizontal(|ui| {
+                ui.label("เริ่มเหงาหลังไม่มีคนเล่น (วินาที)");
+                ui.add(egui::DragValue::new(&mut self.cfg.pet.lonely_after).range(2.0..=600.0).speed(1.0));
+                ui.label("เหงาเพิ่ม/วินาที");
+                ui.add(egui::DragValue::new(&mut self.cfg.pet.lonely_rate).range(0.0..=40.0).speed(0.1));
+            });
+            ui.horizontal(|ui| {
+                ui.label("อิ่มลด/วินาที");
+                ui.add(egui::DragValue::new(&mut self.cfg.pet.hungry_rate).range(0.0..=40.0).speed(0.1));
+                ui.label("ระดับผูกพันสูงสุด");
+                ui.add(egui::DragValue::new(&mut self.cfg.pet.max_level).range(1..=5));
+            });
+            ui.horizontal(|ui| {
+                ui.label("คิวสูงสุด");
+                ui.add(egui::DragValue::new(&mut self.cfg.pet.max_queue).range(1..=200));
+                ui.label("ช่วงรวมของขวัญคนเดียวกัน (วินาที)");
+                ui.add(egui::DragValue::new(&mut self.cfg.pet.merge_window).range(0.0..=30.0).speed(0.1));
+                ui.label("วินาทีสูงสุดต่อกิมมิก");
+                ui.add(egui::DragValue::new(&mut self.cfg.pet.max_seconds).range(2.0..=90.0).speed(0.5));
+            });
+        }
         ui.label("กิมมิก 10 อย่างไล่ตามราคาเพชร (ตั้งของขวัญเองได้ที่คอลัมน์ «กิมมิก» ด้านบน)");
         for t in pet::TRICKS {
             ui.label(format!("  {} เพชร · {} → {}", t.diamonds(), t.gift(), t.label()));
@@ -3290,6 +3404,9 @@ impl eframe::App for ShrineApp {
         if self.settings_open {
             self.settings_ui(&ctx);
         }
+        if self.wizard_open {
+            self.wizard_ui(&ctx);
+        }
         self.handle_shot(&ctx);
         self.handle_record(&ctx);
         self.handle_updates(&ctx);
@@ -3463,6 +3580,51 @@ pub fn display_name(raw: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// ตัวช่วยครั้งแรกเปิดครั้งเดียว และไม่เคยเปิดระหว่างแผนถ่ายภาพ/อัดวิดีโอ
+fn wizard_should_open(wizard_done: bool, shot_active: bool) -> bool {
+    !wizard_done && !shot_active
+}
+
+#[cfg(test)]
+mod wizard_tests {
+    use super::*;
+    use crate::config::Config;
+
+    #[test]
+    fn wizard_opens_once_and_never_during_shots() {
+        assert!(wizard_should_open(false, false));
+        assert!(!wizard_should_open(true, false));
+        assert!(!wizard_should_open(false, true));
+        assert!(!wizard_should_open(true, true));
+    }
+
+    #[test]
+    fn ui_flags_default_false_and_round_trip_through_toml() {
+        let mut c = Config::builtin();
+        assert!(!c.ui.wizard_done);
+        assert!(!c.ui.simple_mode);
+        c.ui.wizard_done = true;
+        c.ui.simple_mode = true;
+        let s = toml::to_string(&c).unwrap();
+        let back: Config = toml::from_str(&s).unwrap();
+        assert!(back.ui.wizard_done);
+        assert!(back.ui.simple_mode);
+    }
+
+    #[test]
+    fn wizard_renders_all_three_steps_headlessly() {
+        let (mut app, ctx) = super::hotkey_tests::headless();
+        assert!(app.wizard_open, "fresh config must open the wizard");
+        for step in 0..3 {
+            app.wizard_step = step;
+            ctx.begin_pass(egui::RawInput::default());
+            app.wizard_ui(&ctx);
+            let _ = ctx.end_pass();
+        }
+        assert!(app.wizard_open, "rendering alone must not close the wizard");
+    }
+}
+
 #[cfg(test)]
 mod name_tests {
     use super::display_name;
@@ -3555,7 +3717,7 @@ mod hotkey_tests {
     use crate::events::BridgeState;
     use std::sync::mpsc;
 
-    fn headless() -> (ShrineApp, egui::Context) {
+    pub(super) fn headless() -> (ShrineApp, egui::Context) {
         let dir = std::env::temp_dir().join(format!("shrine-hotkey-{}", std::process::id()));
         let (_tx, rx) = mpsc::channel::<Incoming>();
         let bridge = Arc::new(Mutex::new(BridgeState {
