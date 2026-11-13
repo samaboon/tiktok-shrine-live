@@ -37,7 +37,7 @@ HOTKEY_CHECKS = [
     ('F8 toggles click-through', 'f8_toggles_click_through'),
     ('F9 cycles background', 'f9_cycles_background_transparent_green_scene'),
     ('F2 switches mode', 'f2_switches_mode'),
-    ('F2 cycles all 5 modes (shrine -> krathong -> cat -> dance -> dunk)', 'f2_cycles_all_5_modes_in_order'),
+    ('F2 cycles all 6 modes (shrine -> krathong -> cat -> dance -> dunk -> pet)', 'f2_cycles_all_6_modes_in_order'),
     ('F1 opens/closes settings', 'f1_opens_and_closes_settings'),
 ]
 QUIT_TEST = 'cmd_q_requests_window_close'
@@ -383,6 +383,66 @@ def main():
         check('dunk flood: repeated throws merge or enter party', s.get('combo', 1) >= 2 or s.get('party') or s.get('queue_len', 99) <= 1, f"combo={s.get('combo')} party={s.get('party')} queue_len={s.get('queue_len')}")
         check('dunk flood: still serving', s.get('theme') == 'dunk' and (s.get('live_units') or 0) <= 250, f"live_units={s.get('live_units')}")
         get('/control?clear=1')
+
+        # ---------------- pet mode: one shared cat, 3 meters, 10 price-laddered gimmicks
+        get('/control?mode=pet'); s = wait_for(lambda s: s['theme'] == 'pet')
+        check('runtime mode switch -> pet (เลี้ยงแมว)', s['theme'] == 'pet')
+        ps = s.get('pet') or {}
+        check('pet: /state exposes cat + 3 meters + 10-trick price ladder',
+              all(k in ps for k in ('name', 'loneliness', 'fullness', 'bond', 'level', 'mood', 'tricks'))
+              and [t['diamonds'] for t in ps.get('tricks', [])] == [1, 5, 10, 30, 99, 150, 199, 399, 400, 4888],
+              f"level={ps.get('level')} tricks={len(ps.get('tricks', []))}")
+        check('pet: cat + meters stay on screen while idle', s['current'] is None and not s['idle'], f"idle={s['idle']}")
+        l0 = ps.get('loneliness', 0); la = ps.get('lonely_after', 20)
+        s = wait_for(lambda s: (s.get('pet') or {}).get('since_touch', 0) > la + 2, 15)
+        l1 = (s.get('pet') or {}).get('loneliness', 0)
+        check('pet: loneliness rises only after nobody plays for lonely_after', l1 > l0 + 1, f'{l0:.1f} -> {l1:.1f} (idle > {la:.0f}s)')
+        f0 = (state().get('pet') or {}).get('fullness', 0); time.sleep(1.5)
+        f1 = (state().get('pet') or {}).get('fullness', 0)
+        check('pet: fullness decays on its own', f1 < f0 - 2, f'{f0:.1f} -> {f1:.1f}')
+        ladder = [('Rose', 1, 'head_pet'), ('Brown Paw', 5, 'paw_five'), ('Magic Feather', 10, 'wand_chase'),
+                  ('Doughnut', 30, 'donut_treat'), ('Sundae Bowl', 99, 'milk_bowl'), ('Puffer Fish', 150, 'fish_toy'),
+                  ('Fan Cat', 199, 'friend_visit'), ('Kitten Kneading', 399, 'knead'), ('Reindeer Milk', 400, 'milk_bottle'),
+                  ('Leon the Kitten', 4888, 'golden_kitten')]
+        cards = set(); bad = []; fed = False; lonely_ok = False
+        fb = (state().get('pet') or {}).get('fullness', 0)
+        for name, d, key in ladder:
+            get(f'/gift?gift_name={q(name)}&user={q("เลี้ยง" + key)}&diamonds={d}')
+            c = wait_for(lambda s: (s.get('current') or {}).get('trick') == key, 12).get('current') or {}
+            if c.get('trick') != key or c.get('gift') != name: bad.append(f"{name}->{c.get('trick')}")
+            cards.add(c.get('card'))
+            if key == 'head_pet':
+                pd = state().get('pet') or {}
+                lonely_ok = pd.get('loneliness', 100) < l1 - 5 and pd.get('since_touch', 99) < 3
+            if key == 'milk_bowl':
+                fed = (state().get('pet') or {}).get('fullness', 0) > fb + 5
+        check('pet: all 10 ladder gifts play their own gimmick', not bad, ', '.join(bad) or '10/10 mapped by catalog name')
+        check('pet: playing pet resets loneliness + idle timer', lonely_ok, f'loneliness was {l1:.1f}')
+        check('pet: feeding gift refills fullness', fed, f'fullness before ladder {fb:.1f}')
+        check('pet: play card only (no lucky numbers)', cards == {'play'}, str(cards))
+        s = wait_for(lambda s: s.get('current') is None and not s.get('queue'), 15)
+        ps2 = s.get('pet') or {}
+        check('pet: bond levels the cat up (10 plays -> level 2+)', ps2.get('level', 1) >= 2 and bool(ps2.get('level_title')), f"level={ps2.get('level')} bond={ps2.get('bond'):.1f} title={ps2.get('level_title')}")
+        get('/control?clear=1'); wait_for(lambda s: s.get('current') is None, 8)
+        get(f"/gift?gift_name={q('MysteryBoxXYZ')}&user={q('นอกตาราง')}&diamonds=150")
+        c = wait_for(lambda s: (s.get('current') or {}).get('user') == 'นอกตาราง', 10).get('current') or {}
+        check('pet: unmapped gift picks the dearest affordable gimmick (150 -> fish_toy)', c.get('trick') == 'fish_toy', f"trick={c.get('trick')}")
+        get('/control?clear=1'); wait_for(lambda s: s.get('current') is None, 8)
+        for _ in range(3):
+            get(f"/gift?gift_name=Rose&user={q('ซ้ำแมว')}&diamonds=1")
+        c = wait_for(lambda s: (s.get('current') or {}).get('user') == 'ซ้ำแมว', 10).get('current') or {}
+        check('pet: same sender + gimmick inside merge window -> combo xN', (c.get('combo') or 1) >= 2, f"combo={c.get('combo')}")
+        get('/control?clear=1'); wait_for(lambda s: s.get('current') is None, 8)
+        for i in range(40):
+            get(f"/gift?gift_name=Rose&user={q('ฝูง' + str(i))}&diamonds=1")
+        s = wait_for(lambda s: s['gifts_received'] > 0 and (s.get('queue_len') or 0) >= 1, 8)
+        mq = (s.get('pet') or {}).get('max_queue', 30)
+        check('pet: gift flood stays inside max_queue', (s.get('queue_len') or 0) <= mq and (s.get('live_units') or 0) <= 250, f"queue_len={s.get('queue_len')}/{mq} overflow_extra={(s.get('pet') or {}).get('overflow_extra')} live_units={s.get('live_units')}")
+        lv = (state().get('pet') or {}).get('level', 1)
+        get('/control?clear=1'); s = wait_for(lambda s: s.get('current') is None and not s.get('queue'), 10)
+        ps3 = s.get('pet') or {}
+        check('pet: clear empties the queue but keeps the raised cat', ps3.get('level') == lv and bool(ps3.get('name')) and s['current'] is None, f"level={ps3.get('level')} name={ps3.get('name')}")
+        get('/control?mode=shrine'); wait_for(lambda s: s['theme'] == 'shrine')
 
         # ---------------- v0.2.4: shared rates, per-sticker dance moves, stage + star
         r = state().get('rates') or {}

@@ -31,6 +31,7 @@ pub struct Config {
     pub cat: CatCfg,
     pub dance: DanceCfg,
     pub dunk: DunkCfg,
+    pub pet: PetCfg,
     pub update: UpdateCfg,
 }
 
@@ -234,6 +235,53 @@ impl Default for DunkCfg {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PetCfg {
+    pub hint_text: String,
+    pub card_title: String,
+    pub guide_label: String,
+    /// ชื่อแมวที่ผู้ชมช่วยกันเลี้ยง
+    pub cat_name: String,
+    /// วินาทีที่ไม่มีคนเล่น แล้วแมวเริ่มเหงา
+    pub lonely_after: f32,
+    /// ความเหงาที่เพิ่มต่อวินาทีหลังพ้น lonely_after
+    pub lonely_rate: f32,
+    /// ความอิ่มที่ลดต่อวินาที
+    pub hungry_rate: f32,
+    /// ระดับผูกพันสูงสุด (แมวโต/แต่งตัวตามระดับ)
+    pub max_level: usize,
+    pub max_queue: usize,
+    /// ช่วงวินาทีที่ของขวัญจากคนเดียวกันถูกรวมเป็นครั้งเดียว
+    pub merge_window: f32,
+    /// วินาทีสูงสุดต่อหนึ่งกิมมิก เมื่อรวมของขวัญซ้ำ
+    pub max_seconds: f32,
+    /// ของขวัญ (ชื่อหรือ gift id) → คีย์กิมมิก ว่าง = ใช้บันไดราคา 10 ขั้นในตัว
+    /// ไม่ร่วมคำนวณเกณฑ์สตาร์ เพราะโหมดนี้ไม่ใช้ขั้นราคา
+    pub tricks: BTreeMap<String, String>,
+    /// ของขวัญ → action ("pray"/"siamsi") ว่าง = รับทุกของขวัญ (กิมมิกเลือกตามราคาเอง)
+    pub gifts: BTreeMap<String, String>,
+}
+impl Default for PetCfg {
+    fn default() -> Self {
+        Self {
+            hint_text: "ส่งของขวัญมาเล่นกับแมว ช่วยกันเลี้ยงให้โต!".into(),
+            card_title: "เลี้ยงแมว!".into(),
+            guide_label: "ส่งอะไร ได้เล่นอะไร".into(),
+            cat_name: "น้องมอมแมม".into(),
+            lonely_after: 20.0,
+            lonely_rate: 1.6,
+            hungry_rate: 0.9,
+            max_level: 5,
+            max_queue: 30,
+            merge_window: 4.0,
+            max_seconds: 14.0,
+            tricks: BTreeMap::new(),
+            gifts: BTreeMap::new(),
+        }
+    }
+}
+
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -411,6 +459,7 @@ impl Default for Config {
             cat: CatCfg::default(),
             dance: DanceCfg::default(),
             dunk: DunkCfg::default(),
+            pet: PetCfg::default(),
             update: UpdateCfg::default(),
         }
     }
@@ -650,6 +699,8 @@ impl Config {
     /// Collect configured sticker keys (gift tables + dance move map) for star-auto pricing.
     pub fn mapped_sticker_keys(&self) -> Vec<String> {
         let mut keys = Vec::new();
+        // pet.tricks is deliberately absent: the cat ladder is priced 1..4888 and would
+        // drag the shared auto-star cutoff up to 4888 for every other mode.
         for (k, _) in self.gifts.map.iter().chain(self.krathong.gifts.iter()).chain(self.cat.gifts.iter()).chain(self.dance.gifts.iter()).chain(self.dunk.gifts.iter()).chain(self.dance.moves.iter()) {
             if !k.trim().is_empty() {
                 keys.push(k.clone());
@@ -661,6 +712,9 @@ impl Config {
     /// Lookup gift -> action string ("pray"/"siamsi"/"none") for the active theme.
     pub fn action_for_gift(&self, name: &str, id: u64) -> String {
         let lname = name.trim().to_lowercase();
+        if self.theme.mode == "pet" && self.pet.gifts.is_empty() {
+            return "pray".into();
+        }
         let map = if self.theme.mode == "krathong" && !self.krathong.gifts.is_empty() {
             &self.krathong.gifts
         } else if self.theme.mode == "cat" && !self.cat.gifts.is_empty() {
@@ -669,6 +723,8 @@ impl Config {
             &self.dance.gifts
         } else if self.theme.mode == "dunk" && !self.dunk.gifts.is_empty() {
             &self.dunk.gifts
+        } else if self.theme.mode == "pet" && !self.pet.gifts.is_empty() {
+            &self.pet.gifts
         } else {
             &self.gifts.map
         };
@@ -825,6 +881,20 @@ venue = "auto"
         c.theme.mode = "cat".into();
         c.cat.gifts.insert("Rose".into(), "siamsi".into());
         assert_eq!(c.action_for_gift("Rose", 0), "siamsi");
+    }
+    #[test]
+    fn pet_mode_accepts_every_gift_and_keeps_the_star_cutoff() {
+        let mut c = Config::builtin();
+        c.theme.mode = "pet".into();
+        c.tiktok.default_action = "none".into();
+        assert_eq!(c.action_for_gift("Leon the Kitten", 6646), "pray");
+        assert_eq!(c.action_for_gift("ของขวัญที่ไม่รู้จัก", 0), "pray");
+        c.pet.gifts.insert("Rose".into(), "siamsi".into());
+        assert_eq!(c.action_for_gift("Rose", 5655), "siamsi");
+        assert_eq!(c.action_for_gift("Leon the Kitten", 6646), "none");
+        // the 4888-diamond cat ladder must not drag the shared auto-star cutoff up
+        c.pet.tricks.insert("Leon the Kitten".into(), "golden_kitten".into());
+        assert!(!c.mapped_sticker_keys().iter().any(|k| k == "Leon the Kitten"));
     }
     #[test]
     fn save_reload_roundtrip() {

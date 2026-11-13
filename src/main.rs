@@ -10,6 +10,7 @@ mod events;
 mod gift_picker;
 mod gifts;
 mod krathong;
+mod pet;
 mod scene;
 mod sticker_fx;
 mod runtime;
