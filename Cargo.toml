@@ -2,7 +2,7 @@
 description = "TikTok LIVE shrine overlay: pray for lucky numbers / siamsi fortune sticks"
 license = "AGPL-3.0-only"
 name = "tiktok-shrine-live"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 
 [dependencies]

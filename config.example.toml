@@ -52,10 +52,7 @@ thb_rate_date = "2026-06-04"
 "Perfume" = "siamsi"        # 5658, 20 เพชร
 "Hand Heart" = "pray"       # 5660, 100 เพชร (ชื่อในแคตตาล็อกจริง ไม่ใช่ Hand Hearts)
 "5660" = "pray"             # Hand Heart (gift id)
-"Galaxy" = "pray"           # 11046, 1000 เพชร
-"Lion" = "siamsi"           # 6369, 29999 เพชร
-"TikTok Universe" = "pray"  # 9101, 44999 เพชร
-"9101" = "pray"             # TikTok Universe (gift id)
+# ของแพงกว่า (Galaxy, Lion, TikTok Universe) ไม่ใส่ในค่าเริ่มต้น — เพิ่มเองได้ในแท็บของขวัญ
 
 [http]
 # เซิร์ฟเวอร์ภายในเครื่อง สำหรับทดสอบ / รับ webhook จาก TikFinity, Streamer.bot ฯลฯ
@@ -102,23 +99,34 @@ speed = 1.0
 # เวลาแสดงผลเลข/คำทำนาย (วินาที)
 reveal_seconds = 5.0
 
-# ---- ระดับความหรูหรา ตามมูลค่าของขวัญ (เพชร x จำนวน) ----
-# เรียงจากน้อยไปมาก, min_diamonds = เพชรขั้นต่ำของระดับนั้น
+# ---- เรทราคา (ใช้ทุกโหมด: ไหว้พระ เซียมซี กระทง แมว เต้น ปาตกน้ำ) ----
+# ขั้นเริ่มต้นใช้ของไม่แพงในแคตตาล็อกเท่านั้น (ทุกชิ้นไม่เกิน 100 เพชร):
+#   Rose / TikTok = 1, Finger Heart = 5, Perfume = 20, Doughnut = 30, Hand Heart = 100
+# ขั้น 5 และสตาร์ (tier5_auto + star_mode = auto) = ของที่แพงสุดในตารางจับคู่หรือแพงกว่า
+# ค่าเริ่มต้นคือ Hand Heart = 100 เพชร (เพิ่มของแพงกว่าในแท็บของขวัญได้ ถ้าอยากยกระดับสตาร์)
 [[tiers]]
 min_diamonds = 0
 name = "สายบุญ"
 [[tiers]]
-min_diamonds = 10
+min_diamonds = 5
 name = "ผู้มีบุญ"
 [[tiers]]
-min_diamonds = 100
+min_diamonds = 30
 name = "เศรษฐีใจบุญ"
 [[tiers]]
-min_diamonds = 1000
+min_diamonds = 100
 name = "มหาเศรษฐี"
 [[tiers]]
-min_diamonds = 10000
+min_diamonds = 100
 name = "จักรพรรดิแห่งบุญ"
+
+[rates]
+# เพชรขั้นต่ำที่ขึ้นเวทีในฉาก «ฟลอร์ + เวที» (ค่าเริ่มต้น 30 = Doughnut — ของไม่แพง ขึ้นเวทีกันได้หลายคน)
+stage_diamonds = 30
+# auto = ของขวัญที่แพงสุดในตารางจับคู่ (หรือแพงกว่า) เป็นสตาร์ / ขั้น 5
+star_mode = "auto"
+star_diamonds = 0
+tier5_auto = true
 
 [siamsi]
 title = "เซียมซีใบที่"
@@ -243,17 +251,26 @@ party_threshold = 8
 # เวที: "auto" = สุ่มจากเวทีที่ปลดล็อกตามขั้น (เวทีใหญ่มีน้ำหนักมากกว่า)
 #       "random" = สุ่มเท่า ๆ กันจากเวทีที่ปลดล็อก
 #       หรือล็อกฉาก: floor / temple_fair / table / speaker / stage / parade / rooftop / foam / cloud
-venue = "auto"
+venue = "floor_stage"
 # รายการเวทีที่ใช้ ว่าง = เปิดครบ
 venues = []
 combo_joiner = " แล้วต่อด้วย "
-# นับถอยหลัง (วินาที) ขั้น 1-5
+# ระยะเวลาภารกิจภายใน (วินาที) ขั้น 1-5 — ไม่แสดงตัวเลขบนการ์ด
 countdown = [8.0, 10.0, 14.0, 18.0, 24.0]
+# ป้ายเมนู «ส่งอะไร ได้ท่าไหน»: always / idle / off
+menu_board = "always"
+menu_position = "left"
+menu_max_rows = 6
+menu_page_seconds = 5.0
+# ฟลอร์ + เวที: อยู่บนฟลอร์นาน (วินาที), จำนวนสูงสุดบนฟลอร์ / บนเวที
+stay_seconds = 40.0
+max_floor = 14
+max_stage = 6
 # ภารกิจเต้น (ภาษาไทย สุภาพ) ขั้น 4-5 จะสุ่มสองข้อมาต่อกัน
 challenges = [
   "เต้นหุ่นยนต์",
   "เต้นสโลว์โมชัน",
-  "สะท้อนการ์ตูนเป็นกระจก",
+  "เต้นท่ากระจกเงา",
   "โพสท่าแล้วค้าง",
   "เต้นไก่",
   "เต้นกับพัด",
@@ -262,6 +279,15 @@ challenges = [
   "โบกแขนเป็นคลื่น",
   "ก้าวปูข้าง ๆ",
 ]
+
+[dance.moves]
+# สติกเกอร์จริงในแคตตาล็อก → ท่าเต้น (ของที่ไม่มีในตารางใช้ท่าตามขั้น ไม่สุ่ม)
+Rose = "wave"
+TikTok = "jump"
+"Finger Heart" = "freeze"
+Perfume = "fan"
+Doughnut = "crab"
+"Hand Heart" = "mirror"
 
 [dance.gifts]
 # ว่าง = ใช้ตาราง [gifts] ด้านบน  ("pray" / "siamsi" = ขึ้นฟลอร์เต้นเหมือนกัน ไม่มีเลขมงคล)
@@ -280,6 +306,7 @@ max_seconds = 20.0
 merge_window = 4.0
 # จำนวนของขวัญในช่วง merge_window ที่จะเข้าโหมดปาร์ตี้ (แถบชื่อเลื่อน)
 party_threshold = 8
+# (เลิกใช้แล้วตั้งแต่ v0.2.4 — ดังก์ทันทีตามขั้น 5 / สตาร์ในตารางเรทราคาที่ใช้ทุกโหมด)
 instant_dunk_tier = 5
 # คะแนนที่เติมเกจ / จำนวนลูก ต่อขั้น 1-5
 meter_add = [1, 2, 4, 7, 10]

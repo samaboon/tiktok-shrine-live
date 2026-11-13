@@ -1032,10 +1032,17 @@ struct TagEntry {
 thread_local! {
     /// While set, name tags are collected instead of drawn, so they can be painted on top of result cards.
     static TAG_LAYER: std::cell::RefCell<Option<Vec<TagEntry>>> = const { std::cell::RefCell::new(None) };
+    /// Immovable obstacles (cards, sticker boards) that tags must not cover.
+    static TAG_OBSTACLES: std::cell::RefCell<Vec<[f32; 4]>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 /// Start collecting name tags (call before drawing the world).
 pub fn defer_tags_begin() {
     TAG_LAYER.with(|l| *l.borrow_mut() = Some(vec![]));
+    TAG_OBSTACLES.with(|l| l.borrow_mut().clear());
+}
+/// Reserve a screen/world rect that name tags must stay clear of (card, menu board).
+pub fn reserve_tag_rect(r: [f32; 4]) {
+    TAG_OBSTACLES.with(|l| l.borrow_mut().push(r));
 }
 fn overlaps(a: &[f32; 4], b: &[f32; 4]) -> bool {
     a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
@@ -1079,7 +1086,7 @@ pub fn defer_tags_flush(cx: &Cx) {
     let mut order: Vec<usize> = (0..v.len()).filter(|&i| v[i].rect.is_some()).collect();
     order.sort_by(|&a, &b| v[b].prio.partial_cmp(&v[a].prio).unwrap_or(std::cmp::Ordering::Equal));
     let mut offs = vec![(0.0f32, 0.0f32); v.len()];
-    let mut placed: Vec<[f32; 4]> = vec![];
+    let mut placed: Vec<[f32; 4]> = TAG_OBSTACLES.with(|l| l.borrow_mut().drain(..).collect());
     for i in order {
         let r = v[i].rect.unwrap();
         let d = resolve_tag(r, &placed);
