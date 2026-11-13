@@ -568,7 +568,7 @@ fn load_or_download(
     decode_icon(id, &bytes)
 }
 
-fn load_cached_icon(img_dir: &Path, id: u64) -> Option<IconReady> {
+pub fn load_cached_icon(img_dir: &Path, id: u64) -> Option<IconReady> {
     for ext in ["webp", "png", "jpg", "jpeg"] {
         let p = img_dir.join(format!("{id}.{ext}"));
         if let Ok(bytes) = std::fs::read(&p) {

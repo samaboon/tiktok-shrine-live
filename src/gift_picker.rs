@@ -78,6 +78,40 @@ impl GiftPicker {
         }
     }
 
+    pub fn icons(&self) -> &std::collections::HashMap<u64, TextureHandle> {
+        &self.icons
+    }
+
+    pub fn request_icon(&self, id: u64, url: &str) {
+        self.fetcher.request(id, url);
+    }
+
+    pub fn prefetch_keys(&self, keys: impl IntoIterator<Item = impl AsRef<str>>) {
+        for k in keys {
+            if let Some(g) = self.catalog.find_by_key(k.as_ref()) {
+                if !g.image.is_empty() {
+                    self.fetcher.request(g.id, &g.image);
+                }
+            }
+        }
+    }
+
+    /// Load already-cached sticker images on this frame so the board is not empty while the worker starts.
+    pub fn ingest_cached(&mut self, ctx: &egui::Context, keys: impl IntoIterator<Item = impl AsRef<str>>) {
+        let img_dir = self.cache_dir.join("img");
+        for k in keys {
+            let Some(g) = self.catalog.find_by_key(k.as_ref()) else { continue };
+            if self.icons.contains_key(&g.id) {
+                continue;
+            }
+            if let Some(ready) = crate::gifts::load_cached_icon(&img_dir, g.id) {
+                let img = ColorImage::from_rgba_unmultiplied([ready.w as usize, ready.h as usize], &ready.rgba);
+                let tex = ctx.load_texture(format!("gift-{}", ready.id), img, TextureOptions::LINEAR);
+                self.icons.insert(ready.id, tex);
+            }
+        }
+    }
+
     fn filtered(&self) -> Vec<&GiftInfo> {
         let q = self.search.trim().to_lowercase();
         let mut v: Vec<&GiftInfo> = self
@@ -122,6 +156,7 @@ impl GiftPicker {
         thb_per_coin: &mut f64,
         thb_rate_source: &str,
         thb_rate_date: &str,
+        mut moves: Option<&mut std::collections::BTreeMap<String, String>>,
     ) -> bool {
         self.drain_icons(ui.ctx());
         let mut changed = false;
@@ -219,8 +254,9 @@ impl GiftPicker {
             .auto_shrink([false, false])
             .max_height(max_h)
             .show(ui, |ui| {
+                let dance = theme == Theme::Dance;
                 egui::Grid::new("gift-grid")
-                    .num_columns(6)
+                    .num_columns(if dance { 7 } else { 6 })
                     .striped(true)
                     .spacing([8.0, 6.0])
                     .min_row_height(row_h)
@@ -231,6 +267,9 @@ impl GiftPicker {
                         ui.label(RichText::new("เพชร").strong());
                         ui.label(RichText::new("ราคา (บาท)").strong());
                         ui.label(RichText::new("การกระทำ").strong());
+                        if dance {
+                            ui.label(RichText::new("ท่าเต้น").strong());
+                        }
                         ui.end_row();
                         // take owned copies of the visible slice metadata to avoid borrow issues
                         let visible: Vec<GiftInfo> =
@@ -255,6 +294,19 @@ impl GiftPicker {
                             if act != before && act != "—" {
                                 upsert_mapping(rows, g, &act);
                                 changed = true;
+                            }
+                            if dance {
+                                if let Some(map) = moves.as_deref_mut() {
+                                    let mut mv = current_move(map, g);
+                                    let before_m = mv.clone();
+                                    move_combo(ui, ("move", g.id), &mut mv);
+                                    if mv != before_m {
+                                        upsert_move(map, g, &mv);
+                                        changed = true;
+                                    }
+                                } else {
+                                    ui.label("—");
+                                }
                             }
                             ui.end_row();
                         }
@@ -444,4 +496,34 @@ mod tests {
             Some("2026-11-12 23:42:58")
         );
     }
+}
+
+fn current_move(map: &std::collections::BTreeMap<String, String>, g: &GiftInfo) -> String {
+    let id_key = g.id.to_string();
+    map.iter()
+        .find(|(k, _)| k.trim() == id_key || k.trim().eq_ignore_ascii_case(&g.name))
+        .map(|(_, a)| a.clone())
+        .or_else(|| crate::dance::default_move_map().get(&g.name).cloned())
+        .unwrap_or_else(|| crate::dance::fallback_move(0).key().into())
+}
+
+fn upsert_move(map: &mut std::collections::BTreeMap<String, String>, g: &GiftInfo, mv: &str) {
+    // prefer the catalog name so duplicate gift IDs (Hand Heart, TikTok Universe) all match
+    let name = g.name.clone();
+    map.retain(|k, _| k.trim() != g.id.to_string() && !k.trim().eq_ignore_ascii_case(&name));
+    map.insert(name, mv.to_string());
+}
+
+fn move_combo(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, mv: &mut String) {
+    let cur = crate::dance::MoveKind::from_key(mv)
+        .map(|k| k.label())
+        .unwrap_or(mv.as_str());
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(cur)
+        .width(110.0)
+        .show_ui(ui, |ui| {
+            for k in crate::dance::MoveKind::ALL {
+                ui.selectable_value(mv, k.key().to_string(), k.label());
+            }
+        });
 }

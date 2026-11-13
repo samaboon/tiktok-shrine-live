@@ -11,6 +11,7 @@ mod gift_picker;
 mod gifts;
 mod krathong;
 mod scene;
+mod sticker_fx;
 mod runtime;
 mod updater;
 
@@ -34,7 +35,7 @@ const APP_DIR_NAME: &str = "TikTokShrineLive";
 
 struct Args {
     config: Option<PathBuf>,
-    demo: Vec<(Action, usize, String)>,
+    demo: Vec<(Action, usize, String, String)>,
     shot_at: Option<f32>,
     out: Option<PathBuf>,
     settings_tab: Option<usize>,
@@ -61,14 +62,15 @@ fn parse_args() -> Args {
             "--config" => a.config = it.next().map(PathBuf::from),
             // pretend to be an older version (to test the updater)
             "--fake-version" => a.fake_version = it.next(),
-            // --demo pray:4:ชื่อ   (action:tier(1-5):name)
+            // --demo pray:4:ชื่อ  or  pray:4:ชื่อ:Rose  (action:tier(1-5):name[:gift])
             "--demo" => {
                 if let Some(v) = it.next() {
-                    let mut p = v.splitn(3, ':');
+                    let mut p = v.splitn(4, ':');
                     let act = p.next().and_then(Action::parse).unwrap_or(Action::Pray);
                     let tier = p.next().and_then(|t| t.parse::<usize>().ok()).unwrap_or(1).max(1) - 1;
                     let name = p.next().unwrap_or("สมชาย").to_string();
-                    a.demo.push((act, tier, name));
+                    let gift = p.next().unwrap_or("").to_string();
+                    a.demo.push((act, tier, name, gift));
                 }
             }
             "--shot-at" => a.shot_at = it.next().and_then(|v| v.parse().ok()),
@@ -279,7 +281,17 @@ fn main() -> eframe::Result<()> {
         status: String::new(),
     }));
 
-    let (w, h) = cfg.window_size();
+    let hall_start = {
+        let theme = args.theme.as_deref().unwrap_or(cfg.theme.mode.as_str());
+        theme.eq_ignore_ascii_case("dance")
+            && crate::dance::Venue::from_key(&cfg.dance.venue) == Some(crate::dance::Venue::FloorStage)
+    };
+    let (w, h) = if hall_start {
+        let w = cfg.window.width.max(200.0);
+        (w, (w * 16.0 / 9.0).round())
+    } else {
+        cfg.window_size()
+    };
     let mut vb = egui::ViewportBuilder::default()
         .with_title("TikTok Shrine Live")
         .with_app_id("tiktok-shrine-live")

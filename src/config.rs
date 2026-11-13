@@ -24,6 +24,7 @@ pub struct Config {
     pub numbers: NumbersCfg,
     pub timing: TimingCfg,
     pub tiers: Vec<TierCfg>,
+    pub rates: RatesCfg,
     pub siamsi: SiamsiCfg,
     pub theme: ThemeCfg,
     pub krathong: KrathongCfg,
@@ -146,8 +147,21 @@ pub struct DanceCfg {
     pub venues: Vec<String>,
     pub challenges: Vec<String>,
     pub combo_joiner: String,
-    /// วินาทีของนับถอยหลังต่อขั้น (1..=5)
+    /// ระยะเวลาภารกิจต่อขั้น (1..=5) — ใช้ภายใน ไม่แสดงตัวเลขบนการ์ด
     pub countdown: Vec<f32>,
+    /// สติกเกอร์ (ชื่อหรือ gift id) → ท่าเต้น (คีย์หรือชื่อไทย) ของขวัญที่ไม่ได้ตั้งใช้ท่าตามขั้น
+    pub moves: BTreeMap<String, String>,
+    /// ป้ายเมนู "ส่งอะไร ได้ท่าไหน": always / idle / off
+    pub menu_board: String,
+    /// left / right
+    pub menu_position: String,
+    pub menu_max_rows: usize,
+    /// วินาทีต่อหน้า ถ้ามีรายการเกิน menu_max_rows
+    pub menu_page_seconds: f32,
+    /// How long each dancer stays on the ฟลอร์+เวที hall (seconds).
+    pub stay_seconds: f32,
+    pub max_floor: usize,
+    pub max_stage: usize,
     pub gifts: BTreeMap<String, String>,
 }
 impl Default for DanceCfg {
@@ -160,11 +174,19 @@ impl Default for DanceCfg {
             max_seconds: 20.0,
             merge_window: 4.0,
             party_threshold: 8,
-            venue: "auto".into(),
+            venue: "floor_stage".into(),
             venues: vec![],
             challenges: vec![],
             combo_joiner: " แล้วต่อด้วย ".into(),
             countdown: vec![8.0, 10.0, 14.0, 18.0, 24.0],
+            moves: crate::dance::default_move_map(),
+            menu_board: "always".into(),
+            menu_position: "left".into(),
+            menu_max_rows: 6,
+            menu_page_seconds: 5.0,
+            stay_seconds: 40.0,
+            max_floor: 14,
+            max_stage: 6,
             gifts: BTreeMap::new(),
         }
     }
@@ -280,6 +302,36 @@ pub struct TierCfg {
     pub name: String,
 }
 
+/// Shared price/threshold table used by every overlay mode.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct RatesCfg {
+    /// Diamonds needed to go up on the ฟลอร์+เวที stage (also shown in the shared rates UI).
+    pub stage_diamonds: u64,
+    /// "auto" = highest-priced configured sticker (or anything pricier); "manual" = star_diamonds.
+    pub star_mode: String,
+    pub star_diamonds: u64,
+    /// When true, tier 5 uses the same cutoff as the star rule.
+    pub tier5_auto: bool,
+}
+impl Default for RatesCfg {
+    fn default() -> Self {
+        Self {
+            stage_diamonds: 30,
+            star_mode: "auto".into(),
+            star_diamonds: 0,
+            tier5_auto: true,
+        }
+    }
+}
+
+impl RatesCfg {
+    pub fn star_is_auto(&self) -> bool {
+        let k = self.star_mode.trim().to_lowercase();
+        k.is_empty() || k == "auto" || k == "อัตโนมัติ" || k == "สูงสุดในตาราง"
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SiamsiCfg {
@@ -352,6 +404,7 @@ impl Default for Config {
             numbers: NumbersCfg::default(),
             timing: TimingCfg::default(),
             tiers: vec![],
+            rates: RatesCfg::default(),
             siamsi: SiamsiCfg::default(),
             theme: ThemeCfg::default(),
             krathong: KrathongCfg::default(),
@@ -432,6 +485,38 @@ impl Config {
         }
         if cfg.dance.countdown.len() < 5 {
             cfg.dance.countdown = def.dance.countdown.clone();
+        }
+        if cfg.dance.menu_board.trim().is_empty() {
+            cfg.dance.menu_board = def.dance.menu_board.clone();
+        }
+        if cfg.dance.menu_position.trim().is_empty() {
+            cfg.dance.menu_position = def.dance.menu_position.clone();
+        }
+        if cfg.dance.menu_max_rows == 0 {
+            cfg.dance.menu_max_rows = def.dance.menu_max_rows;
+        }
+        cfg.dance.menu_max_rows = cfg.dance.menu_max_rows.clamp(3, 12);
+        if cfg.dance.menu_page_seconds <= 0.0 {
+            cfg.dance.menu_page_seconds = def.dance.menu_page_seconds;
+        }
+        cfg.dance.menu_page_seconds = cfg.dance.menu_page_seconds.clamp(1.5, 30.0);
+        if cfg.dance.stay_seconds <= 0.0 {
+            cfg.dance.stay_seconds = def.dance.stay_seconds;
+        }
+        cfg.dance.stay_seconds = cfg.dance.stay_seconds.clamp(8.0, 120.0);
+        if cfg.dance.max_floor == 0 {
+            cfg.dance.max_floor = def.dance.max_floor;
+        }
+        cfg.dance.max_floor = cfg.dance.max_floor.clamp(4, 24);
+        if cfg.dance.max_stage == 0 {
+            cfg.dance.max_stage = def.dance.max_stage;
+        }
+        cfg.dance.max_stage = cfg.dance.max_stage.clamp(1, 10);
+        if cfg.rates.stage_diamonds == 0 {
+            cfg.rates.stage_diamonds = def.rates.stage_diamonds;
+        }
+        if cfg.rates.star_mode.trim().is_empty() {
+            cfg.rates.star_mode = def.rates.star_mode.clone();
         }
         cfg.dance.max_visible = cfg.dance.max_visible.clamp(1, 12);
         if cfg.dance.max_seconds <= 0.0 {
@@ -518,15 +603,59 @@ impl Config {
         std::fs::write(path, text).map_err(|e| e.to_string())
     }
 
-    /// Tier index (0-based) for a given total diamond value.
+    /// Tier index (0-based) for a given total diamond value, using the stored [[tiers]] table as-is.
     pub fn tier_for(&self, diamonds: u64) -> usize {
+        self.tier_for_with_star(diamonds, self.stored_t5())
+    }
+
+    fn stored_t5(&self) -> u64 {
+        self.tiers.get(4).map(|t| t.min_diamonds).unwrap_or(0)
+    }
+
+    /// Star cutoff in diamonds. `mapped_max` is the highest price among configured stickers
+    /// (from the catalog); when star_mode is auto that value (or anything pricier) is the star.
+    pub fn star_cutoff(&self, mapped_max: u64) -> u64 {
+        if self.rates.star_is_auto() {
+            mapped_max.max(1)
+        } else {
+            self.rates.star_diamonds.max(1)
+        }
+    }
+
+    /// Effective min-diamonds for each tier. When `tier5_auto` is on, tier 5 uses the star cutoff.
+    pub fn effective_min_diamonds(&self, star: u64) -> Vec<u64> {
+        let mut v: Vec<u64> = self.tiers.iter().map(|t| t.min_diamonds).collect();
+        if self.rates.tier5_auto && !v.is_empty() {
+            let last = v.len() - 1;
+            v[last] = star;
+        }
+        v
+    }
+
+    pub fn tier_for_with_star(&self, diamonds: u64, star: u64) -> usize {
+        let mins = self.effective_min_diamonds(star);
         let mut idx = 0;
-        for (i, t) in self.tiers.iter().enumerate() {
-            if diamonds >= t.min_diamonds {
+        for (i, m) in mins.iter().enumerate() {
+            if diamonds >= *m {
                 idx = i;
             }
         }
         idx
+    }
+
+    pub fn is_star(&self, diamonds: u64, mapped_max: u64) -> bool {
+        diamonds >= self.star_cutoff(mapped_max)
+    }
+
+    /// Collect configured sticker keys (gift tables + dance move map) for star-auto pricing.
+    pub fn mapped_sticker_keys(&self) -> Vec<String> {
+        let mut keys = Vec::new();
+        for (k, _) in self.gifts.map.iter().chain(self.krathong.gifts.iter()).chain(self.cat.gifts.iter()).chain(self.dance.gifts.iter()).chain(self.dunk.gifts.iter()).chain(self.dance.moves.iter()) {
+            if !k.trim().is_empty() {
+                keys.push(k.clone());
+            }
+        }
+        keys
     }
 
     /// Lookup gift -> action string ("pray"/"siamsi"/"none") for the active theme.
@@ -581,8 +710,12 @@ mod tests {
         assert!(c.cat.thanks.len() >= 14, "cat thanks {}", c.cat.thanks.len());
         assert!(c.dance.challenges.len() >= 8, "dance challenges {}", c.dance.challenges.len());
         assert_eq!(c.dunk.meter_target, 10);
-        assert_eq!(c.dance.venue, "auto");
+        assert_eq!(c.dance.venue, "floor_stage");
         assert_eq!(c.tiers.len(), 5);
+        assert_eq!(c.rates.stage_diamonds, 30);
+        assert!(c.rates.star_is_auto());
+        assert!(c.rates.tier5_auto);
+        assert_eq!(c.dance.stay_seconds, 40.0);
         assert_eq!(c.cat.max_visible, 5);
         // no CJK ideographs anywhere in the shipped texts
         for t in c.siamsi.fortunes.iter().chain(c.krathong.blessings.iter()).chain(c.cat.thanks.iter()) {
@@ -592,18 +725,78 @@ mod tests {
     #[test]
     fn tiers_thresholds() {
         let c = Config::builtin();
+        // affordable defaults: 0 / 5 / 30 / 100, t5 stored 100 (Hand Heart / auto star)
         assert_eq!(c.tier_for(0), 0);
-        assert_eq!(c.tier_for(9), 0);
-        assert_eq!(c.tier_for(10), 1);
-        assert_eq!(c.tier_for(99), 1);
-        assert_eq!(c.tier_for(100), 2);
-        assert_eq!(c.tier_for(999), 2);
-        assert_eq!(c.tier_for(1000), 3);
-        assert_eq!(c.tier_for(9999), 3);
-        assert_eq!(c.tier_for(10000), 4);
+        assert_eq!(c.tier_for(4), 0);
+        assert_eq!(c.tier_for(5), 1);
+        assert_eq!(c.tier_for(29), 1);
+        assert_eq!(c.tier_for(30), 2);
+        assert_eq!(c.tier_for(99), 2);
+        // t4 and t5 share the 100 cutoff; last match is step 5 / star
+        assert_eq!(c.tier_for(100), 4);
         assert_eq!(c.tier_for(5_000_000), 4);
-        // diamonds x repeat: Rose(1) x 150 = 150 -> tier 3 (index 2)
-        assert_eq!(c.tier_for(1 * 150), 2);
+        assert_eq!(c.tier_for(1 * 150), 4);
+        assert_eq!(c.star_cutoff(100), 100);
+        assert_eq!(c.tier_for_with_star(99, 100), 2);
+        assert_eq!(c.tier_for_with_star(100, 100), 4);
+        assert!(c.is_star(100, 100));
+        assert!(!c.is_star(99, 100));
+        assert!(c.is_star(44999, 100));
+        assert!(c.is_star(30, 30));
+        assert!(!c.gifts.map.keys().any(|k| k.eq_ignore_ascii_case("Galaxy") || k.eq_ignore_ascii_case("Lion") || k.eq_ignore_ascii_case("TikTok Universe") || k == "9101" || k == "11046" || k == "6369"));
+        assert!(!c.dance.moves.keys().any(|k| k.eq_ignore_ascii_case("Galaxy") || k.eq_ignore_ascii_case("Lion") || k.eq_ignore_ascii_case("TikTok Universe")));
+        assert_eq!(c.dance.moves.get("Hand Heart").map(|s| s.as_str()), Some("mirror"));
+    }
+
+    #[test]
+    fn v023_config_migrates_rates_and_ignores_instant_dunk_tier() {
+        // a 0.2.3-shaped file: old tier table, no [rates], no [dance.moves], custom instant_dunk_tier
+        let raw = r#"
+[tiktok]
+username = "olduser"
+default_action = "pray"
+
+[[tiers]]
+min_diamonds = 0
+name = "สายบุญ"
+[[tiers]]
+min_diamonds = 10
+name = "ผู้มีบุญ"
+[[tiers]]
+min_diamonds = 100
+name = "เศรษฐีใจบุญ"
+[[tiers]]
+min_diamonds = 1000
+name = "มหาเศรษฐี"
+[[tiers]]
+min_diamonds = 10000
+name = "จักรพรรดิแห่งบุญ"
+
+[dunk]
+instant_dunk_tier = 3
+meter_target = 10
+
+[dance]
+venue = "auto"
+"#;
+        let dir = std::env::temp_dir().join(format!("tsl_mig_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("config.toml");
+        std::fs::write(&p, raw).unwrap();
+        let r = Config::load(&p);
+        // keep the user's global tier table
+        assert_eq!(r.tiers.iter().map(|t| t.min_diamonds).collect::<Vec<_>>(), vec![0, 10, 100, 1000, 10000]);
+        assert_eq!(r.tiktok.username, "olduser");
+        // missing [rates] -> shared defaults (not an error)
+        assert_eq!(r.rates.stage_diamonds, 30);
+        assert!(r.rates.star_is_auto());
+        assert!(r.rates.tier5_auto);
+        // per-mode dunk override is kept in the file for compatibility but is no longer the live rule:
+        // instants follow tier 5 / star of the shared table (see app + docs).
+        assert_eq!(r.dunk.instant_dunk_tier, 3, "value still loads so old files parse");
+        // dance.moves filled from Default when the table is missing
+        assert!(r.dance.moves.contains_key("Rose"), "default move map is applied");
+        let _ = std::fs::remove_dir_all(dir);
     }
     #[test]
     fn gift_mapping() {
@@ -644,7 +837,8 @@ mod tests {
         assert_eq!(r.window.background, "green");
         assert_eq!(r.window.layout, "full");
         assert_eq!(r.theme.mode, "cat");
-        assert_eq!(r.tiers[2].min_diamonds, 222);
+        // load sorts [[tiers]] by min_diamonds, so the edited value may change index
+        assert!(r.tiers.iter().any(|t| t.min_diamonds == 222), "custom tier threshold is kept: {:?}", r.tiers.iter().map(|t| t.min_diamonds).collect::<Vec<_>>());
         assert_eq!(r.gifts.map.get("Galaxy").map(|s| s.as_str()), Some("siamsi"));
         assert_eq!(r.krathong.blessings, vec!["ขอให้มีความสุข".to_string()]);
         assert_eq!(r.cat.thanks, vec!["เหมียว ๆ ขอบคุณนะ".to_string()]);

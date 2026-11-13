@@ -135,6 +135,10 @@ pub struct Show {
     qage: f32,
     /// where the walk-in to the shrine starts (front of the line, or off-screen)
     start_x: f32,
+    gift: String,
+    gift_id: u64,
+    diamonds: u64,
+    star: bool,
 }
 
 pub struct Floating {
@@ -146,6 +150,8 @@ pub struct Floating {
     tier: usize,
     name: String,
     seed: f32,
+    diamonds: u64,
+    star: bool,
 }
 
 /// Screenshot automation (CLI --shot-*)
@@ -199,6 +205,11 @@ pub struct ShrineApp {
     settings_open: bool,
     settings_tab: usize,
     test_tier: usize,
+    test_sender: String,
+    test_repeat: u32,
+    test_crowd_n: u32,
+    /// Scheduled simulated gifts: (seconds remaining, user, gift_id, gift_name, diamonds, repeat)
+    sim_queue: Vec<(f32, String, u64, String, u64, u32)>,
     applied: Option<Applied>,
     sprites: Option<Sprites>,
     assets_dir: PathBuf,
@@ -233,7 +244,7 @@ pub struct AppInit {
     pub bridge: BridgeCtl,
     pub assets_dir: PathBuf,
     pub shot: Option<ShotPlan>,
-    pub demo: Vec<(Action, usize, String)>,
+    pub demo: Vec<(Action, usize, String, String)>,
     pub seed: Option<u64>,
     pub open_settings: bool,
     pub start_stopped: bool,
@@ -301,6 +312,10 @@ impl ShrineApp {
             settings_open: init.open_settings,
             settings_tab,
             test_tier: 0,
+            test_sender: String::new(),
+            test_repeat: 1,
+            test_crowd_n: 10,
+            sim_queue: vec![],
             applied: None,
             sprites: None,
             assets_dir: init.assets_dir,
@@ -318,9 +333,16 @@ impl ShrineApp {
             gift_picker: GiftPicker::new(gift_base),
         };
         app.load_gift_rows();
-        for (a, tier, user) in init.demo {
-            let d = app.tier_min(tier).max(1);
-            app.enqueue(a, &user, d, tier);
+        for (a, tier, user, gift) in init.demo {
+            if gift.trim().is_empty() {
+                let d = app.tier_min(tier).max(1);
+                app.enqueue(a, &user, d, tier, "", 0);
+            } else if let Some(g) = app.gift_picker.catalog.find_by_key(&gift).cloned() {
+                app.enqueue(a, &user, g.diamond_count.max(1), 99, &g.name, g.id);
+            } else {
+                let d = app.tier_min(tier).max(1);
+                app.enqueue(a, &user, d, tier, gift.trim(), 0);
+            }
         }
         app
     }
@@ -351,7 +373,7 @@ impl ShrineApp {
     }
 
     fn vh(&self) -> f32 {
-        let (w, h) = self.cfg.window_size();
+        let (w, h) = self.live_window_size();
         h / w * VW
     }
     fn ground_of(&self, th: Theme) -> f32 {
@@ -364,8 +386,49 @@ impl ShrineApp {
         }
     }
 
-    fn enqueue(&mut self, action: Action, user: &str, diamonds: u64, tier_override: usize) {
-        let tier = if tier_override < 99 { tier_override.min(self.cfg.tiers.len().saturating_sub(1)) } else { self.cfg.tier_for(diamonds) };
+    fn mapped_max_star(&self) -> u64 {
+        let mut m = 0u64;
+        for k in self.cfg.mapped_sticker_keys() {
+            if let Some(g) = self.gift_picker.catalog.find_by_key(&k) {
+                m = m.max(g.diamond_count);
+            }
+        }
+        if m == 0 { 100 } else { m }
+    }
+
+    fn sync_hall(&mut self) {
+        let star = self.cfg.star_cutoff(self.mapped_max_star());
+        self.dancers.set_hall(
+            self.cfg.dance.max_floor,
+            self.cfg.dance.max_stage,
+            self.cfg.dance.stay_seconds,
+            self.cfg.rates.stage_diamonds,
+            star,
+        );
+    }
+
+    fn hall_fullscreen(&self) -> bool {
+        self.theme() == Theme::Dance
+            && (self.dancers.active_venue() == Some(crate::dance::Venue::FloorStage)
+                || crate::dance::Venue::from_key(&self.cfg.dance.venue) == Some(crate::dance::Venue::FloorStage))
+    }
+
+    fn live_window_size(&self) -> (f32, f32) {
+        if self.hall_fullscreen() {
+            let w = self.cfg.window.width.max(200.0);
+            (w, (w * 16.0 / 9.0).round())
+        } else {
+            self.cfg.window_size()
+        }
+    }
+
+    fn enqueue(&mut self, action: Action, user: &str, diamonds: u64, tier_override: usize, gift: &str, gift_id: u64) {
+        let star_cut = self.cfg.star_cutoff(self.mapped_max_star());
+        let mut tier = if tier_override < 99 { tier_override.min(self.cfg.tiers.len().saturating_sub(1)) } else { self.cfg.tier_for_with_star(diamonds, star_cut) };
+        let star = self.cfg.is_star(diamonds, self.mapped_max_star());
+        if star {
+            tier = tier.max(self.cfg.tiers.len().saturating_sub(1));
+        }
         let tier_name = self.cfg.tiers.get(tier).map(|t| t.name.clone()).unwrap_or_default();
         let digits = self.cfg.numbers.digits.clone();
         let numbers: Vec<(String, String)> = digits
@@ -399,25 +462,28 @@ impl ShrineApp {
         }
         if theme == Theme::Dance {
             self.dancers.set_flood(self.cfg.dance.merge_window, self.cfg.dance.max_seconds, self.cfg.dance.party_threshold);
+            self.sync_hall();
             self.dancers.enqueue(
-                DanceIn { user, tier, tier_name, gift: String::new() },
+                DanceIn { user, tier, tier_name, gift: gift.to_string(), gift_id, diamonds },
                 &self.cfg.dance.challenges,
                 &self.cfg.dance.combo_joiner,
                 &self.cfg.dance.venue,
                 &self.cfg.dance.venues,
                 &self.cfg.dance.countdown,
                 self.cfg.dance.max_visible,
+                &self.cfg.dance.moves,
             );
             return;
         }
         if theme == Theme::Dunk {
             self.dunkers.set_flood(self.cfg.dunk.merge_window, self.cfg.dunk.max_seconds, self.cfg.dunk.party_threshold);
+            // instant dunk follows shared t5 / star (per-mode instant_dunk_tier is ignored)
             self.dunkers.enqueue(
-                DunkIn { user, tier, tier_name, gift: String::new() },
+                DunkIn { user, tier, tier_name, gift: gift.to_string() },
                 self.cfg.dunk.meter_target,
                 &self.cfg.dunk.meter_add,
                 &self.cfg.dunk.balls,
-                self.cfg.dunk.instant_dunk_tier,
+                5,
                 self.cfg.dunk.max_visible,
             );
             return;
@@ -452,7 +518,53 @@ impl ShrineApp {
             qmove: 0.0,
             qage: 0.0,
             start_x: -150.0,
+            gift: gift.to_string(),
+            gift_id,
+            diamonds,
+            star,
         });
+    }
+
+    /// Same path as a live gift event (action, move, stage/star, krathong look from gift id).
+    /// Used by the ทดสอบ simulator; does not talk to TikTok.
+    fn play_gift(&mut self, user: &str, gift_id: u64, gift_name: &str, diamonds: u64, repeat: u32) {
+        let act = self.cfg.action_for_gift(gift_name, gift_id);
+        let Some(action) = Action::parse(&act) else {
+            eprintln!("[gift] {user} ส่ง {gift_name} ({gift_id}) -> ไม่ได้ตั้งค่า (none)");
+            self.flash(format!("ยังไม่ได้ตั้งการกระทำให้ «{gift_name}»"));
+            return;
+        };
+        let total = diamonds.max(1) * repeat.max(1) as u64;
+        let plays = repeat.clamp(1, self.cfg.tiktok.max_plays_per_gift.max(1));
+        eprintln!("[gift] {user} ส่ง {gift_name} x{repeat} ({total} เพชร) -> {act}");
+        for _ in 0..plays {
+            self.enqueue(action, user, total, 99, gift_name, gift_id);
+        }
+    }
+
+    fn tick_sim(&mut self, dt: f32) {
+        if self.sim_queue.is_empty() {
+            return;
+        }
+        for item in &mut self.sim_queue {
+            item.0 -= dt;
+        }
+        let ready: Vec<_> = self.sim_queue.iter().filter(|x| x.0 <= 0.0).cloned().collect();
+        self.sim_queue.retain(|x| x.0 > 0.0);
+        for (_, user, id, name, diamonds, repeat) in ready {
+            self.play_gift(&user, id, &name, diamonds, repeat);
+        }
+    }
+
+    fn start_crowd_sim(&mut self) {
+        let gifts = catalog_gifts_for_sim(&self.cfg, &self.gift_picker.catalog);
+        if gifts.is_empty() {
+            self.flash("ยังไม่มีสติกเกอร์ในตารางเรทราคาให้จำลอง".into());
+            return;
+        }
+        let n = self.test_crowd_n.clamp(1, 40) as usize;
+        self.sim_queue = plan_crowd_burst(n, &gifts, 3.0, &mut self.rng);
+        self.flash(format!("จำลอง {} คน ส่งของขวัญใน 3 วินาที", n));
     }
 
     fn handle_incoming(&mut self, ev: Incoming, ctx: &egui::Context) {
@@ -495,24 +607,13 @@ impl ShrineApp {
             Incoming::Direct(DirectIn { action, user, diamonds, .. }) => {
                 self.gifts_received += 1;
                 if self.running {
-                    self.enqueue(action, &user, diamonds, 99)
+                    self.enqueue(action, &user, diamonds, 99, "", 0);
                 }
             }
             Incoming::Gift(GiftIn { user, gift_id, gift_name, diamonds, repeat }) => {
                 self.gifts_received += 1;
-                if !self.running {
-                    return;
-                }
-                let act = self.cfg.action_for_gift(&gift_name, gift_id);
-                let Some(action) = Action::parse(&act) else {
-                    eprintln!("[gift] {user} ส่ง {gift_name} ({gift_id}) -> ไม่ได้ตั้งค่า (none)");
-                    return;
-                };
-                let total = diamonds.max(1) * repeat.max(1) as u64;
-                let plays = repeat.clamp(1, self.cfg.tiktok.max_plays_per_gift.max(1));
-                eprintln!("[gift] {user} ส่ง {gift_name} x{repeat} ({total} เพชร) -> {act}");
-                for _ in 0..plays {
-                    self.enqueue(action, &user, total, 99);
+                if self.running {
+                    self.play_gift(&user, gift_id, &gift_name, diamonds, repeat);
                 }
             }
         }
@@ -567,6 +668,7 @@ impl ShrineApp {
         let speed = self.cfg.timing.speed.clamp(0.25, 4.0);
         let dt = dt_real * speed;
         self.time += dt_real;
+        self.tick_sim(dt_real);
         let active = self.active();
         if active {
             self.idle_for = 0.0;
@@ -638,7 +740,7 @@ impl ShrineApp {
             let before_s = self.dunkers.started;
             let before_f = self.dunkers.finished;
             self.dunkers.set_flood(self.cfg.dunk.merge_window, self.cfg.dunk.max_seconds, self.cfg.dunk.party_threshold);
-            self.dunkers.tick(dt, self.cfg.dunk.meter_target, &self.cfg.dunk.meter_add, &self.cfg.dunk.balls, self.cfg.dunk.instant_dunk_tier, self.cfg.dunk.max_visible);
+            self.dunkers.tick(dt, self.cfg.dunk.meter_target, &self.cfg.dunk.meter_add, &self.cfg.dunk.balls, 5, self.cfg.dunk.max_visible);
             self.shows_started += self.dunkers.started.saturating_sub(before_s);
             self.shows_finished += self.dunkers.finished.saturating_sub(before_f);
         }
@@ -770,7 +872,7 @@ impl ShrineApp {
                 if !s.released && a >= push_end {
                     s.released = true;
                     let x0 = kr::BANK_EDGE + 110.0;
-                    self.floating.push(Floating { x: x0, y: s.lane_y, vx: 70.0, age: 0.0, fade: None, tier: s.tier, name: s.user.clone(), seed: s.look.seed });
+                    self.floating.push(Floating { x: x0, y: s.lane_y, vx: 70.0, age: 0.0, fade: None, tier: s.tier, name: s.user.clone(), seed: s.look.seed, diamonds: s.diamonds, star: s.star });
                     for _ in 0..14 {
                         let ang = -self.rng.f32() * std::f32::consts::PI;
                         let mut p = Particle::new(5, Pos2::new(x0, s.lane_y), Vec2::new(ang.cos() * 90.0, ang.sin() * 70.0), 0.6, Color32::from_rgb(190, 220, 255), 3.0);
@@ -1346,13 +1448,124 @@ impl ShrineApp {
         }
         if theme == Theme::Dance {
             // no screen-wide shimmer: it washed over the hero's face at t4–t5
-            self.dancers.draw_overlay(&ui_cx, &self.cfg.dance.card_title, &self.cfg.dance.guide_label, sprites);
+            self.dancers.draw_overlay(&ui_cx, &self.cfg.dance.card_title, &self.cfg.dance.guide_label, sprites, self.gift_picker.icons());
         }
         if theme == Theme::Dunk {
             self.dunkers.draw_overlay(&ui_cx, &self.cfg.dunk.card_title, &self.cfg.dunk.dunk_banner, &self.cfg.dunk.splash_text);
         }
+        self.draw_sticker_menu(&ui_cx, theme);
         defer_tags_flush(&cx);
         self.draw_hud(&ui_cx);
+    }
+
+    fn draw_sticker_menu(&self, cx: &Cx, theme: Theme) {
+        let (when, pos, max_rows, page, title, rows) = match theme {
+            Theme::Dance => (
+                self.cfg.dance.menu_board.as_str(),
+                self.cfg.dance.menu_position.as_str(),
+                self.cfg.dance.menu_max_rows,
+                self.cfg.dance.menu_page_seconds,
+                "ส่งอะไร ได้ท่าไหน",
+                self.board_rows_dance(),
+            ),
+            Theme::Krathong => (
+                self.cfg.dance.menu_board.as_str(),
+                self.cfg.dance.menu_position.as_str(),
+                self.cfg.dance.menu_max_rows,
+                self.cfg.dance.menu_page_seconds,
+                "ส่งอะไร ได้กระทงแบบไหน",
+                self.board_rows_krathong(),
+            ),
+            _ => return,
+        };
+        let live = match theme {
+            Theme::Dance => self.dancers.front_user().is_some(),
+            Theme::Krathong => self.current.is_some() || !self.floating.is_empty(),
+            _ => false,
+        };
+        match crate::sticker_fx::board_when(when) {
+            crate::sticker_fx::BoardWhen::Off => return,
+            crate::sticker_fx::BoardWhen::Idle if live => return,
+            _ => {}
+        }
+        let hall = theme == Theme::Dance && (
+            self.dancers.active_venue() == Some(crate::dance::Venue::FloorStage)
+            || crate::dance::Venue::from_key(&self.cfg.dance.venue) == Some(crate::dance::Venue::FloorStage)
+        );
+        // Hall: left column under the card, ending well above floor name tags so dancers keep the full floor.
+        // Krathong live: right side of the sky so the kneeling character / name stay clear, with room for more rows.
+        let krathong_live = theme == Theme::Krathong && live;
+        let (pos, top, max_y1) = if hall {
+            let top = self.dancers.overlay_card_bottom().unwrap_or(8.0) + 8.0;
+            let max_y1 = crate::dance::floor_y(cx.vh) - 250.0;
+            ("left", top, max_y1)
+        } else if theme == Theme::Dance {
+            ("left", self.dancers.overlay_card_bottom().unwrap_or(8.0) + 10.0, crate::dance::floor_y(cx.vh) - 90.0)
+        } else if krathong_live {
+            ("right", 16.0, crate::krathong::water_top(cx.vh) - 24.0)
+        } else {
+            (pos, 16.0, crate::krathong::water_top(cx.vh) - 8.0)
+        };
+        if let Some(r) = crate::sticker_fx::draw_sticker_board(cx, title, &rows, self.gift_picker.icons(), pos, max_rows, page, top, max_y1) {
+            crate::scene::reserve_tag_rect(r);
+        }
+    }
+
+    fn board_rows_dance(&self) -> Vec<crate::sticker_fx::BoardRow> {
+        use crate::sticker_fx::BoardRow;
+        let map = if self.cfg.dance.moves.is_empty() {
+            crate::dance::default_move_map()
+        } else {
+            self.cfg.dance.moves.clone()
+        };
+        let mut rows = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for (k, mv) in &map {
+            let Some(g) = self.gift_picker.catalog.find_by_key(k) else { continue };
+            let key = (g.id, g.name.trim().to_lowercase());
+            if !seen.insert(key.1.clone()) { continue; }
+            let _ = key.0;
+            let style = crate::dance::MoveKind::from_key(mv)
+                .map(|m| m.label().to_string())
+                .unwrap_or_else(|| mv.clone());
+            rows.push(crate::sticker_fx::BoardRow { id: g.id, name: g.name.clone(), diamonds: g.diamond_count, style, pin: false });
+        }
+        rows.sort_by_key(|r| r.diamonds);
+        if let Some(top) = rows.iter().map(|r| r.diamonds).max() {
+            for r in &mut rows {
+                r.pin = r.diamonds == top && top > 0;
+            }
+        }
+        rows
+    }
+
+    fn board_rows_krathong(&self) -> Vec<crate::sticker_fx::BoardRow> {
+        use crate::sticker_fx::BoardRow;
+        let star_cut = self.cfg.star_cutoff(self.mapped_max_star());
+        let mut rows = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for k in self.cfg.mapped_sticker_keys() {
+            let Some(g) = self.gift_picker.catalog.find_by_key(&k) else { continue };
+            if !seen.insert(g.name.trim().to_lowercase()) { continue; }
+            let t = self.cfg.tier_for_with_star(g.diamond_count, star_cut);
+            let is_star = self.cfg.is_star(g.diamond_count, self.mapped_max_star());
+            rows.push(crate::sticker_fx::BoardRow {
+                id: g.id,
+                name: g.name.clone(),
+                diamonds: g.diamond_count,
+                style: crate::sticker_fx::krathong_style_label(t, is_star).into(),
+                pin: is_star,
+            });
+        }
+        rows.sort_by_key(|r| r.diamonds);
+        if !rows.iter().any(|r| r.pin) {
+            if let Some(top) = rows.iter().map(|r| r.diamonds).max() {
+                for r in &mut rows {
+                    r.pin = r.diamonds == top && top > 0;
+                }
+            }
+        }
+        rows
     }
 
     /// `pcx` = same camera, faded by the transparent-mode props setting (platform, shrine, flowers)
@@ -1397,13 +1610,24 @@ impl ShrineApp {
         }
         let vh = cx.vh;
         let wt = kr::water_top(vh);
+        let any_star = self.floating.iter().any(|f| f.star) || self.current.as_ref().map(|s| s.star).unwrap_or(false);
+        if any_star {
+            crate::sticker_fx::draw_star_river_glow(cx, wt, vh, cx.time, 1.0);
+        }
         let mut fl: Vec<&Floating> = self.floating.iter().collect();
         fl.sort_by(|a, b| a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal));
         for f in fl {
             let sc = lerp(0.6, 1.0, ((f.y - wt) / (vh - wt).max(1.0)).clamp(0.0, 1.0));
             let alpha = f.fade.map(|x| 1.0 - x / 2.0).unwrap_or(1.0).clamp(0.0, 1.0);
             let bob = (cx.time * 1.6 + f.seed).sin() * 2.5;
-            kr::draw_krathong(cx, f.x, f.y + bob, sc, f.tier, f.seed, Some(&f.name), alpha);
+            let y = f.y + bob;
+            if f.star {
+                crate::sticker_fx::draw_star_fx(cx, f.x, y, cx.time, f.age, crate::sticker_fx::StarStyle::River, Some(y - 90.0 * sc));
+            }
+            kr::draw_krathong(cx, f.x, y, sc, f.tier, f.seed, Some(&f.name), alpha);
+            if f.star {
+                crate::sticker_fx::draw_star_banner(cx, f.x, y - 78.0 * sc, &f.name, f.age.min(1.0), alpha);
+            }
         }
         if bg != "transparent" {
             kr::draw_bank(cx);
@@ -1461,6 +1685,9 @@ impl ShrineApp {
             } else {
                 self.kr_pos(s, a)
             };
+            if s.star {
+                crate::sticker_fx::draw_star_fx(cx, kp.0, kp.1, cx.time, 1.0, crate::sticker_fx::StarStyle::River, Some(rig.head.1));
+            }
             kr::draw_krathong(cx, kp.0, kp.1, if held { 0.62 } else { 0.72 }, s.tier, s.look.seed, None, 1.0);
         }
         // fortune stick in flight / landed, with its number
@@ -1482,7 +1709,12 @@ impl ShrineApp {
         let head_top = rig.head.1 - HEAD_R * k * 1.05 - if s.tier >= 3 { 70.0 * k } else { 8.0 };
         let total = w + a_d + r + o;
         let alpha = 1.0 - smooth((s.t - (total - 0.6)) / 0.6);
-        draw_name_banner(cx, x, head_top, &s.user, s.tier, if s.tier >= 2 { &s.tier_name } else { "" }, if s.start_x > -149.0 { 1.0 } else { s.t / 0.9 }, alpha);
+        let appear = if s.start_x > -149.0 { 1.0 } else { s.t / 0.9 };
+        if s.star && s.theme == Theme::Krathong {
+            crate::sticker_fx::draw_star_banner(cx, x, head_top, &s.user, appear, alpha);
+        } else {
+            draw_name_banner(cx, x, head_top, &s.user, s.tier, if s.tier >= 2 { &s.tier_name } else { "" }, appear, alpha);
+        }
         tag_pointer(cx, x, head_top, s.look.tag, alpha);
         self.banner_at.set((x, head_top));
     }
@@ -1743,8 +1975,20 @@ impl ShrineApp {
             Theme::Shrine => &self.cfg.window.hint_text,
         };
         if self.cfg.window.show_hint && idle && !hint.is_empty() {
-            let y = if matches!(self.theme(), Theme::Krathong | Theme::Cat | Theme::Dance | Theme::Dunk) { 36.0 } else { cx.vh - 40.0 };
-            cx.text_o(VW / 2.0, y, Align2::CENTER_CENTER, hint, 28.0, GOLD, rgba(60, 0, 10, 0.95), true);
+            let board_on = matches!(self.theme(), Theme::Dance | Theme::Krathong)
+                && !matches!(crate::sticker_fx::board_when(&self.cfg.dance.menu_board), crate::sticker_fx::BoardWhen::Off);
+            if self.theme() == Theme::Krathong && board_on {
+                // stay in the right-hand sky, clearly below the board title and above the water
+                let y = crate::krathong::water_top(cx.vh) - 36.0;
+                cx.text_o(VW - 16.0, y, Align2::RIGHT_CENTER, hint, 22.0, GOLD, rgba(60, 0, 10, 0.95), true);
+            } else if board_on && !crate::sticker_fx::board_is_right(&self.cfg.dance.menu_position) {
+                cx.text_o(VW - 16.0, 36.0, Align2::RIGHT_CENTER, hint, 24.0, GOLD, rgba(60, 0, 10, 0.95), true);
+            } else if board_on {
+                cx.text_o(16.0, 36.0, Align2::LEFT_CENTER, hint, 24.0, GOLD, rgba(60, 0, 10, 0.95), true);
+            } else {
+                let y = if matches!(self.theme(), Theme::Krathong | Theme::Cat | Theme::Dance | Theme::Dunk) { 36.0 } else { cx.vh - 40.0 };
+                cx.text_o(VW / 2.0, y, Align2::CENTER_CENTER, hint, 28.0, GOLD, rgba(60, 0, 10, 0.95), true);
+            }
         }
         if self.flash_msg.1 > 0.0 {
             cx.text_o(VW / 2.0, 30.0, Align2::CENTER_CENTER, &self.flash_msg.0, 24.0, Color32::WHITE, rgba(0, 0, 0, 0.9), true);
@@ -1928,13 +2172,13 @@ impl ShrineApp {
                 self.test_tier = nums.iter().position(|x| *x == k).unwrap();
                 self.flash(format!("ระดับทดสอบ: {} ({})", self.test_tier + 1, self.cfg.tiers.get(self.test_tier).map(|t| t.name.as_str()).unwrap_or("")));
             } else if k == Key::Num1 {
-                { let n = test_name(&mut self.rng); self.enqueue(Action::Pray, &n, self.tier_min(self.test_tier), self.test_tier); }
+                { let n = test_name(&mut self.rng); self.enqueue(Action::Pray, &n, self.tier_min(self.test_tier), self.test_tier, "", 0); }
             } else if k == Key::Num2 {
-                { let n = test_name(&mut self.rng); self.enqueue(Action::Siamsi, &n, self.tier_min(self.test_tier), self.test_tier); }
+                { let n = test_name(&mut self.rng); self.enqueue(Action::Siamsi, &n, self.tier_min(self.test_tier), self.test_tier, "", 0); }
             } else if let Some(i) = tier_keys_p.iter().position(|x| *x == k) {
-                { let n = test_name(&mut self.rng); self.enqueue(Action::Pray, &n, self.tier_min(i), i); }
+                { let n = test_name(&mut self.rng); self.enqueue(Action::Pray, &n, self.tier_min(i), i, "", 0); }
             } else if let Some(i) = tier_keys_s.iter().position(|x| *x == k) {
-                { let n = test_name(&mut self.rng); self.enqueue(Action::Siamsi, &n, self.tier_min(i), i); }
+                { let n = test_name(&mut self.rng); self.enqueue(Action::Siamsi, &n, self.tier_min(i), i, "", 0); }
             } else if k == Key::F1 || k == Key::Comma {
                 self.settings_open = !self.settings_open;
             } else if k == Key::F8 {
@@ -1965,9 +2209,9 @@ impl ShrineApp {
     }
 
     fn apply_window(&mut self, ctx: &egui::Context) {
-        let now = Applied { size: self.cfg.window_size(), aot: self.cfg.window.always_on_top, click: self.cfg.window.click_through };
+        let now = Applied { size: self.live_window_size(), aot: self.cfg.window.always_on_top, click: self.cfg.window.click_through };
         let prev = self.applied;
-        if prev.map(|p| p.size) != Some(now.size) && prev.is_some() {
+        if prev.map(|p| p.size) != Some(now.size) {
             ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::InnerSize(Vec2::new(now.size.0, now.size.1)));
         }
         if prev.map(|p| p.aot) != Some(now.aot) {
@@ -2051,7 +2295,7 @@ impl ShrineApp {
     }
 
     fn settings_contents(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let tabs = ["เริ่ม/หยุด", "TikTok", "หน้าจอ", "ของขวัญ", "ระดับ", "เลข/คำทำนาย", "ทดสอบ", "อัปเดต"];
+        let tabs = ["เริ่ม/หยุด", "TikTok", "หน้าจอ", "ของขวัญ", "เรทราคา", "เลข/คำทำนาย", "ทดสอบ", "อัปเดต"];
         ui.horizontal_wrapped(|ui| {
             for (i, t) in tabs.iter().enumerate() {
                 if ui.selectable_label(self.settings_tab == i, egui::RichText::new(*t).size(17.0)).clicked() {
@@ -2186,7 +2430,7 @@ impl ShrineApp {
             ui.label("ความกว้าง (px)");
             ui.add(egui::Slider::new(&mut self.cfg.window.width, 270.0..=1440.0).step_by(10.0));
             ui.end_row();
-            let (w, h) = self.cfg.window_size();
+            let (w, h) = self.live_window_size();
             ui.label("ขนาดจริง");
             ui.label(format!("{w} x {h} px"));
             ui.end_row();
@@ -2279,6 +2523,7 @@ impl ShrineApp {
         ui.label("เลือกจากรายการด้านล่าง (รูป ชื่อ รหัส ราคาเพชร) หรือพิมพ์ชื่อภาษาอังกฤษ / เลข gift id ในตาราง");
         let src = self.cfg.gifts.thb_rate_source.clone();
         let date = self.cfg.gifts.thb_rate_date.clone();
+        let moves = if th == Theme::Dance { Some(&mut self.cfg.dance.moves) } else { None };
         let gp_changed = self.gift_picker.ui(
             ui,
             th,
@@ -2287,6 +2532,7 @@ impl ShrineApp {
             &mut self.cfg.gifts.thb_per_coin,
             &src,
             &date,
+            moves,
         );
         let _ = gp_changed;
         let mut remove = None;
@@ -2324,23 +2570,80 @@ impl ShrineApp {
     }
 
     fn tab_tiers(&mut self, ui: &mut egui::Ui) {
-        ui.heading("ระดับความหรูหรา (ตามมูลค่าเพชร)");
-        ui.label("มูลค่า = เพชรของของขวัญ × จำนวนที่ส่ง  ยิ่งแพง ตัวละครยิ่งหรู พลุยิ่งใหญ่");
-        let desc = ["ชุดธรรมดา ประกายเล็ก", "ผ้าคาดทอง พลุ 2 ลูก", "ชุดทอง พรมทอง พลุ 4 ลูก", "มงกุฎ + ออร่า พลุ 8 ลูก", "ชุดจักรพรรดิ ผู้ติดตามกางฉัตร พลุเต็มฟ้า + แสงระยิบ"];
-        egui::Grid::new("tiers").num_columns(4).striped(true).spacing([10.0, 8.0]).show(ui, |ui| {
+        ui.heading("เรทราคา (ใช้ทุกโหมด)");
+        ui.label("ตารางนี้ใช้ร่วมกันทั้งไหว้พระ เซียมซี ลอยกระทง แมว เต้น และปาตกน้ำ — ไม่มีเรทย่อยแยกโหมด");
+        ui.label("มูลค่า = เพชรของของขวัญ × จำนวนที่ส่ง  ค่าเริ่มต้นตั้งให้ของถูก ๆ มีลูกเล่นได้ (Rose/TikTok 1, Finger Heart 5, Doughnut 30, Hand Heart 100) ส่วนขั้น 5 / สตาร์เป็นของขวัญที่แพงสุดในตารางจับคู่หรือแพงกว่า");
+        let rate = self.cfg.gifts.thb_per_coin;
+        let star_auto = self.mapped_max_star();
+        let star_cut = self.cfg.star_cutoff(star_auto);
+        let star_name = {
+            let mut best: Option<(u64, String)> = None;
+            for k in self.cfg.mapped_sticker_keys() {
+                if let Some(g) = self.gift_picker.catalog.find_by_key(&k) {
+                    if best.as_ref().map(|(d, _)| g.diamond_count >= *d).unwrap_or(true) {
+                        best = Some((g.diamond_count, g.name.clone()));
+                    }
+                }
+            }
+            best.map(|(_, n)| n).unwrap_or_else(|| "—".into())
+        };
+        ui.label(egui::RichText::new(format!(
+            "สตาร์ตอนนี้ = {} เพชร{}  (ของที่แพงสุดในตาราง: {} {} เพชร)",
+            star_cut,
+            crate::gifts::thb_for_diamonds(star_cut, rate).map(|b| format!("  ≈ ฿{b:.0}", b = b)).unwrap_or_default(),
+            star_name,
+            star_auto
+        )).strong());
+        let desc = ["ชุดธรรมดา ประกายเล็ก / กระทงใบตอง / ฟลอร์", "ผ้าคาดทอง พลุ 2 ลูก / กระทงดอกไม้ / ฟลอร์", "ชุดทอง พรมทอง พลุ 4 ลูก / กระทงทอง / ขึ้นเวที (ค่าเริ่มต้น)", "มงกุฎ + ออร่า พลุ 8 ลูก / กระทงหรูมีโคม", "ชุดจักรพรรดิ + สตาร์ (พลุ โคม แสง) — ตามกฎสตาร์ด้านล่าง"];
+        let n_tiers = self.cfg.tiers.len();
+        let t5_auto = self.cfg.rates.tier5_auto;
+        egui::Grid::new("tiers").num_columns(5).striped(true).spacing([10.0, 8.0]).show(ui, |ui| {
             ui.label(egui::RichText::new("ระดับ").strong());
             ui.label(egui::RichText::new("เพชรขั้นต่ำ").strong());
+            ui.label(egui::RichText::new("โดยประมาณ (บาท)").strong());
             ui.label(egui::RichText::new("ชื่อระดับ").strong());
             ui.label(egui::RichText::new("เอฟเฟกต์").strong());
             ui.end_row();
-            for (i, t) in self.cfg.tiers.iter_mut().enumerate() {
+            for i in 0..n_tiers {
+                let last = i + 1 == n_tiers;
                 ui.label(format!("{}", i + 1));
-                ui.add(egui::DragValue::new(&mut t.min_diamonds).range(0..=1_000_000).speed(5.0));
-                ui.add_sized([170.0, 26.0], egui::TextEdit::singleline(&mut t.name));
+                if last && t5_auto {
+                    ui.label(format!("{star_cut}  (อัตโนมัติตามสตาร์)"));
+                } else {
+                    ui.add(egui::DragValue::new(&mut self.cfg.tiers[i].min_diamonds).range(0..=1_000_000).speed(5.0));
+                }
+                let shown = if last && t5_auto { star_cut } else { self.cfg.tiers[i].min_diamonds };
+                ui.label(crate::gifts::format_thb_approx(shown, rate));
+                ui.add_sized([170.0, 26.0], egui::TextEdit::singleline(&mut self.cfg.tiers[i].name));
                 ui.add(egui::Label::new(egui::RichText::new(desc.get(i).copied().unwrap_or("เหมือนระดับ 5")).size(14.0)).wrap());
                 ui.end_row();
             }
         });
+        ui.checkbox(&mut self.cfg.rates.tier5_auto, "ขั้น 5 ตามกฎสตาร์ (ของขวัญที่แพงสุดในตาราง หรือแพงกว่า)");
+        ui.separator();
+        ui.heading("เวทีและสตาร์ (ใช้ทุกโหมด)");
+        ui.horizontal(|ui| {
+            ui.label("เพชรขั้นต่ำขึ้นเวที (ฟลอร์ + เวที)");
+            ui.add(egui::DragValue::new(&mut self.cfg.rates.stage_diamonds).range(1..=1_000_000).speed(1.0));
+            ui.label(crate::gifts::format_thb_approx(self.cfg.rates.stage_diamonds, rate));
+        });
+        ui.label("ค่าเริ่มต้น 30 เพชร = Doughnut — ขึ้นเวทีได้ด้วยของไม่แพง ให้หลายคนอยู่บนเวทีด้วยกัน");
+        ui.horizontal(|ui| {
+            ui.label("กฎสตาร์");
+            let auto = self.cfg.rates.star_is_auto();
+            let label = if auto { "อัตโนมัติ: ของที่แพงสุดในตาราง หรือแพงกว่า" } else { "กำหนดเพชรเอง" };
+            egui::ComboBox::from_id_salt("star-mode").selected_text(label).width(340.0).show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.cfg.rates.star_mode, "auto".into(), "อัตโนมัติ: ของที่แพงสุดในตาราง หรือแพงกว่า");
+                ui.selectable_value(&mut self.cfg.rates.star_mode, "manual".into(), "กำหนดเพชรเอง");
+            });
+        });
+        if !self.cfg.rates.star_is_auto() {
+            ui.horizontal(|ui| {
+                ui.label("เพชรขั้นต่ำของสตาร์");
+                ui.add(egui::DragValue::new(&mut self.cfg.rates.star_diamonds).range(1..=1_000_000).speed(5.0));
+                ui.label(crate::gifts::format_thb_approx(self.cfg.rates.star_diamonds, rate));
+            });
+        }
         self.cfg.tiers.sort_by_key(|t| t.min_diamonds);
     }
 
@@ -2448,7 +2751,35 @@ impl ShrineApp {
             }
         });
         ui.horizontal(|ui| {
-            ui.label("นักเต้นบนจอสูงสุด");
+            ui.label("อยู่บนฟลอร์ (วินาที)");
+            ui.add(egui::DragValue::new(&mut self.cfg.dance.stay_seconds).range(8.0..=120.0).speed(1.0));
+            ui.label("สูงสุดบนฟลอร์");
+            ui.add(egui::DragValue::new(&mut self.cfg.dance.max_floor).range(4..=24));
+            ui.label("สูงสุดบนเวที");
+            ui.add(egui::DragValue::new(&mut self.cfg.dance.max_stage).range(1..=10));
+        });
+        ui.label("เกณฑ์ขึ้นเวทีและสตาร์ตั้งที่แท็บ «เรทราคา (ใช้ทุกโหมด)»");
+        ui.horizontal(|ui| {
+            ui.label("ป้ายเมนูสติกเกอร์");
+            egui::ComboBox::from_id_salt("dance-menu-when").selected_text(match self.cfg.dance.menu_board.as_str() {
+                "off" | "ปิด" => "ปิด",
+                "idle" | "ว่าง" => "ตอนว่างเท่านั้น",
+                _ => "แสดงตลอด",
+            }).width(160.0).show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.cfg.dance.menu_board, "always".into(), "แสดงตลอด");
+                ui.selectable_value(&mut self.cfg.dance.menu_board, "idle".into(), "ตอนว่างเท่านั้น");
+                ui.selectable_value(&mut self.cfg.dance.menu_board, "off".into(), "ปิด");
+            });
+            ui.label("ตำแหน่ง");
+            egui::ComboBox::from_id_salt("dance-menu-pos").selected_text(if self.cfg.dance.menu_position == "right" { "ขวา" } else { "ซ้าย" }).width(80.0).show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.cfg.dance.menu_position, "left".into(), "ซ้าย");
+                ui.selectable_value(&mut self.cfg.dance.menu_position, "right".into(), "ขวา");
+            });
+            ui.label("แถวสูงสุด");
+            ui.add(egui::DragValue::new(&mut self.cfg.dance.menu_max_rows).range(3..=16));
+        });
+        ui.horizontal(|ui| {
+            ui.label("นักเต้นบนจอสูงสุด (เวทีอื่น)");
             ui.add(egui::DragValue::new(&mut self.cfg.dance.max_visible).range(1..=12));
             ui.label("วินาทีสูงสุดต่อภารกิจ");
             ui.add(egui::DragValue::new(&mut self.cfg.dance.max_seconds).range(4.0..=90.0).speed(0.5));
@@ -2478,8 +2809,7 @@ impl ShrineApp {
         ui.horizontal(|ui| {
             ui.label("เป้าเกจดังก์");
             ui.add(egui::DragValue::new(&mut self.cfg.dunk.meter_target).range(1..=99));
-            ui.label("ขั้นที่ดังก์ทันที");
-            ui.add(egui::DragValue::new(&mut self.cfg.dunk.instant_dunk_tier).range(1..=5));
+            ui.label("ดังก์ทันทีตามขั้น 5 / สตาร์ ในแท็บเรทราคา (ใช้ทุกโหมด)");
         });
         ui.horizontal(|ui| {
             ui.label("คนบนจอสูงสุด");
@@ -2497,7 +2827,72 @@ impl ShrineApp {
     }
 
     fn tab_test(&mut self, ui: &mut egui::Ui) {
-        ui.heading("ทดสอบเอฟเฟกต์");
+        ui.heading("จำลองการส่งของขวัญ");
+        ui.label("คลิกสติกเกอร์ด้านล่างเพื่อจำลองเหตุการณ์ของขวัญจริง (ใช้รหัส gift id เส้นทางเดียวกับไลฟ์ — ท่าเต้น ขั้นเวที/สตาร์ และความหรูของกระทงตามสติกเกอร์นั้น) ใช้ได้แม้กดหยุดหรือยังไม่เชื่อมต่อ และไม่ส่งอะไรไปที่ TikTok");
+        ui.horizontal(|ui| {
+            ui.label("ชื่อผู้ส่ง");
+            ui.add(egui::TextEdit::singleline(&mut self.test_sender).hint_text("ว่าง = สุ่มชื่อทดสอบ").desired_width(200.0));
+            ui.label("จำนวนครั้ง (คอมโบ)");
+            ui.add(egui::DragValue::new(&mut self.test_repeat).range(1..=20));
+        });
+        let gifts = catalog_gifts_for_sim(&self.cfg, &self.gift_picker.catalog);
+        ui.label(format!(
+            "สติกเกอร์ในตารางเรทราคา ({} รายการ) — ชื่อตามแคตตาล็อกที่ TikTok ส่งมา พร้อมราคาเพชรและบาทโดยประมาณ",
+            gifts.len()
+        ));
+        let row_h = 56.0;
+        let list_h = ((gifts.len().max(1).min(8) as f32) * (row_h + 6.0) + 8.0).clamp(200.0, 420.0);
+        egui::ScrollArea::vertical().id_salt("sim-gifts").max_height(list_h).show(ui, |ui| {
+            egui::Grid::new("sim-gift-grid").num_columns(4).spacing([8.0, 6.0]).min_row_height(row_h).show(ui, |ui| {
+                for g in &gifts {
+                    self.gift_picker.request_icon(g.id, &g.image);
+                    ui.horizontal(|ui| {
+                        if let Some(tex) = self.gift_picker.icons().get(&g.id) {
+                            ui.image((tex.id(), Vec2::splat(40.0)));
+                        } else {
+                            let (rect, _) = ui.allocate_exact_size(Vec2::splat(40.0), egui::Sense::hover());
+                            ui.painter().rect_filled(rect, 6.0, Color32::from_gray(40));
+                        }
+                        let label = format!("{}  ·  {} เพชร  ·  {}", g.name, g.diamond_count, crate::gifts::format_thb_approx(g.diamond_count, self.cfg.gifts.thb_per_coin));
+                        if ui.add(egui::Button::new(egui::RichText::new(label).size(16.0)).min_size(Vec2::new(420.0, 44.0))).clicked() {
+                            let user = if self.test_sender.trim().is_empty() {
+                                test_name(&mut self.rng)
+                            } else {
+                                self.test_sender.trim().to_string()
+                            };
+                            self.play_gift(&user, g.id, &g.name, g.diamond_count, self.test_repeat.max(1));
+                        }
+                    });
+                    ui.end_row();
+                }
+            });
+        });
+        if gifts.is_empty() {
+            ui.label("ยังไม่มีสติกเกอร์ในตารางจับคู่ — เพิ่มในแท็บของขวัญก่อน");
+        }
+        ui.add_space(6.0);
+        ui.separator();
+        ui.heading("จำลองคนเยอะ");
+        ui.horizontal(|ui| {
+            ui.label("จำนวนคน");
+            ui.add(egui::DragValue::new(&mut self.test_crowd_n).range(1..=40));
+            if ui.add(egui::Button::new(egui::RichText::new("จำลองคนเยอะ").size(18.0).strong()).fill(Color32::from_rgb(30, 120, 80)).min_size(Vec2::new(200.0, 44.0))).clicked() {
+                self.start_crowd_sim();
+            }
+            if !self.sim_queue.is_empty() {
+                ui.label(format!("กำลังจำลอง เหลือ {} คน", self.sim_queue.len()));
+            }
+        });
+        ui.label("สุ่มชื่อและสติกเกอร์จากตาราง แล้วส่งต่อเนื่องใน 3 วินาที เพื่อดูฟลอร์แน่น / คิวยาว");
+        if ui.button("ล้างคิวและหยุดจำลอง").clicked() {
+            self.sim_queue.clear();
+            self.queue.clear();
+            self.cats.clear();
+            self.dancers.clear();
+            self.dunkers.clear();
+        }
+        ui.separator();
+        ui.label("ทดสอบตามระดับ (ไม่ระบุสติกเกอร์ — ใช้เพชรขั้นต่ำของระดับ):");
         ui.horizontal(|ui| {
             ui.label("ระดับ:");
             for i in 0..self.cfg.tiers.len() {
@@ -2507,21 +2902,15 @@ impl ShrineApp {
         ui.horizontal(|ui| {
             if ui.add(egui::Button::new(egui::RichText::new(self.theme().action_label("pray")).size(18.0)).min_size(Vec2::new(240.0, 48.0))).clicked() {
                 let n = test_name(&mut self.rng);
-                self.enqueue(Action::Pray, &n, self.tier_min(self.test_tier), self.test_tier);
+                self.enqueue(Action::Pray, &n, self.tier_min(self.test_tier), self.test_tier, "", 0);
             }
             if ui.add(egui::Button::new(egui::RichText::new(self.theme().action_label("siamsi")).size(18.0)).min_size(Vec2::new(200.0, 48.0))).clicked() {
                 let n = test_name(&mut self.rng);
-                self.enqueue(Action::Siamsi, &n, self.tier_min(self.test_tier), self.test_tier);
+                self.enqueue(Action::Siamsi, &n, self.tier_min(self.test_tier), self.test_tier, "", 0);
             }
         });
-        if ui.button("ล้างคิว").clicked() {
-            self.queue.clear();
-            self.cats.clear();
-            self.dancers.clear();
-            self.dunkers.clear();
-        }
         ui.separator();
-        ui.label("ทดสอบผ่าน HTTP (เช่นจาก TikFinity / เบราว์เซอร์):");
+        ui.label("ทดสอบผ่าน HTTP (เช่นจาก TikFinity / เบราว์เซอร์) — ไม่ได้ใช้เมื่อกดสติกเกอร์ด้านบน:");
         ui.code(format!("http://{}/event?action=pray&user=สมชาย&diamonds=100", self.cfg.http.bind));
         ui.code(format!("http://{}/gift?gift_name=Rose&user=สมชาย&repeat=5", self.cfg.http.bind));
     }
@@ -2722,8 +3111,14 @@ impl eframe::App for ShrineApp {
         while let Ok(ev) = self.rx.try_recv() {
             self.handle_incoming(ev, &ctx);
         }
+        self.gift_picker.ingest_cached(&ctx, self.cfg.mapped_sticker_keys());
+        self.gift_picker.drain_icons(&ctx);
+        self.gift_picker.prefetch_keys(self.cfg.mapped_sticker_keys());
         self.handle_keys(&ctx);
         let dt = self.sim_dt.unwrap_or_else(|| ctx.input(|i| i.stable_dt).min(0.1));
+        if self.theme() == Theme::Dance {
+            self.sync_hall();
+        }
         self.update(dt);
         self.apply_window(&ctx);
 
@@ -2801,6 +3196,39 @@ fn truncate(s: &str, n: usize) -> String {
     } else {
         s.chars().take(n).collect::<String>() + "…"
     }
+}
+
+fn catalog_gifts_for_sim(cfg: &Config, catalog: &crate::gifts::GiftCatalog) -> Vec<crate::gifts::GiftInfo> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for k in cfg.mapped_sticker_keys() {
+        let Some(g) = catalog.find_by_key(&k) else { continue };
+        if seen.insert(g.name.trim().to_lowercase()) {
+            out.push(g.clone());
+        }
+    }
+    out.sort_by_key(|g| (g.diamond_count, g.id));
+    out
+}
+
+fn plan_crowd_burst(
+    n: usize,
+    gifts: &[crate::gifts::GiftInfo],
+    span: f32,
+    rng: &mut fastrand::Rng,
+) -> Vec<(f32, String, u64, String, u64, u32)> {
+    if gifts.is_empty() {
+        return vec![];
+    }
+    let n = n.clamp(1, 40);
+    let span = span.max(0.5);
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let g = &gifts[rng.usize(0..gifts.len())];
+        let t = (i as f32 + 1.0) * (span / n as f32);
+        out.push((t, test_name(rng), g.id, g.name.clone(), g.diamond_count, 1));
+    }
+    out
 }
 
 fn test_name(rng: &mut fastrand::Rng) -> String {
@@ -2889,5 +3317,76 @@ mod name_tests {
         assert_eq!(display_name("มะลิ🌸 ✨ Nok\u{200D}❤️"), "มะลิ Nok");
         assert_eq!(display_name("🔥🔥"), "");
         assert_eq!(display_name("  สม  ชาย  "), "สม ชาย");
+    }
+}
+
+
+#[cfg(test)]
+mod sim_tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::events::Action;
+    use crate::gifts::GiftCatalog;
+
+    #[test]
+    fn catalog_gifts_include_mapped_stickers_with_real_prices() {
+        let cfg = Config::builtin();
+        let cat = GiftCatalog::bundled().expect("bundled catalog");
+        let gifts = catalog_gifts_for_sim(&cfg, &cat);
+        assert_eq!(gifts.len(), 6, "default mapped stickers should be the six affordable gifts, got {gifts:?}");
+        let names: Vec<_> = gifts.iter().map(|g| g.name.as_str()).collect();
+        for n in ["Rose", "TikTok", "Finger Heart", "Perfume", "Doughnut", "Hand Heart"] {
+            assert!(names.contains(&n), "{names:?}");
+        }
+        assert!(!names.contains(&"Galaxy") && !names.contains(&"Lion") && !names.contains(&"TikTok Universe"), "expensive gifts are not defaults: {names:?}");
+        let rose = gifts.iter().find(|g| g.name == "Rose").unwrap();
+        assert_eq!(rose.id, 5655);
+        assert_eq!(rose.diamond_count, 1);
+        let hh = gifts.iter().find(|g| g.name == "Hand Heart").unwrap();
+        assert_eq!(hh.diamond_count, 100);
+        assert_eq!(hh.id, 5660);
+        assert_eq!(gifts.last().unwrap().name, "Hand Heart");
+        assert!(gifts.iter().all(|g| g.diamond_count <= 100));
+        let mut seen = std::collections::HashSet::new();
+        for g in &gifts {
+            assert!(seen.insert(g.name.to_lowercase()), "duplicate {}", g.name);
+        }
+    }
+
+    #[test]
+    fn simulated_gift_uses_same_action_and_price_as_live_mapping() {
+        let cfg = Config::builtin();
+        let cat = GiftCatalog::bundled().expect("bundled catalog");
+        let rose = cat.find_by_key("Rose").unwrap();
+        let act = Action::parse(&cfg.action_for_gift(&rose.name, rose.id)).expect("Rose is mapped");
+        assert!(matches!(act, Action::Pray | Action::Siamsi));
+        assert_eq!(rose.diamond_count, 1);
+        let hh = cat.find_by_key("Hand Heart").unwrap();
+        assert!(cfg.is_star(hh.diamond_count, 100));
+        let uni = cat.find_by_key("TikTok Universe").unwrap();
+        assert!(cfg.is_star(uni.diamond_count, 100));
+        let donut = cat.find_by_key("Doughnut").unwrap();
+        assert_eq!(donut.diamond_count, 30);
+        assert!(donut.diamond_count >= cfg.rates.stage_diamonds);
+        assert!(!cfg.is_star(donut.diamond_count, 100));
+    }
+
+    #[test]
+    fn plan_crowd_burst_spreads_n_senders_over_a_few_seconds() {
+        let cfg = Config::builtin();
+        let cat = GiftCatalog::bundled().expect("bundled catalog");
+        let gifts = catalog_gifts_for_sim(&cfg, &cat);
+        let mut rng = fastrand::Rng::with_seed(7);
+        let plan = plan_crowd_burst(10, &gifts, 3.0, &mut rng);
+        assert_eq!(plan.len(), 10);
+        let times: Vec<f32> = plan.iter().map(|p| p.0).collect();
+        assert!(times.iter().all(|t| *t > 0.0 && *t <= 3.0 + 1e-3), "{times:?}");
+        assert!(times.windows(2).all(|w| w[1] > w[0]), "times should increase: {times:?}");
+        let ids: std::collections::HashSet<u64> = gifts.iter().map(|g| g.id).collect();
+        assert!(plan.iter().all(|p| ids.contains(&p.2)));
+        let names: std::collections::HashSet<_> = plan.iter().map(|p| p.1.as_str()).collect();
+        assert!(names.len() >= 2, "mixed test names, got {names:?}");
+        let kinds: std::collections::HashSet<_> = plan.iter().map(|p| p.2).collect();
+        assert!(kinds.len() >= 2, "mixed stickers, got {kinds:?}");
     }
 }
