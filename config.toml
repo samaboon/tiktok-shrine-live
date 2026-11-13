@@ -104,6 +104,7 @@ reveal_seconds = 5.0
 #   Rose / TikTok = 1, Finger Heart = 5, Perfume = 20, Doughnut = 30, Hand Heart = 100
 # ขั้น 5 และสตาร์ (tier5_auto + star_mode = auto) = ของที่แพงสุดในตารางจับคู่หรือแพงกว่า
 # ค่าเริ่มต้นคือ Hand Heart = 100 เพชร (เพิ่มของแพงกว่าในแท็บของขวัญได้ ถ้าอยากยกระดับสตาร์)
+# บันไดขั้น: 1 = ขั้น 1, 5 = ขั้น 2, 20 = ขั้น 3, 30 = ขั้น 4 (ขึ้นเวที), 100 = ขั้น 5 (สตาร์)
 [[tiers]]
 min_diamonds = 0
 name = "สายบุญ"
@@ -111,10 +112,10 @@ name = "สายบุญ"
 min_diamonds = 5
 name = "ผู้มีบุญ"
 [[tiers]]
-min_diamonds = 30
+min_diamonds = 20
 name = "เศรษฐีใจบุญ"
 [[tiers]]
-min_diamonds = 100
+min_diamonds = 30
 name = "มหาเศรษฐี"
 [[tiers]]
 min_diamonds = 100

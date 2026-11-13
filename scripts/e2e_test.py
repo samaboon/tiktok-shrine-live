@@ -1,14 +1,58 @@
 #!/usr/bin/env python3
-"""End-to-end test of the overlay: keyboard keys (xdotool), HTTP routes, gift->action mapping,
-tier thresholds (diamonds x repeat), queue, modes, idle, save/reload, start/stop, click-through.
-Runs the real binary under Xvfb and reads its /state JSON. Writes tests/e2e_results.md."""
-import json, os, re, shutil, subprocess, sys, time, urllib.request, urllib.parse
+"""End-to-end test of the overlay: keyboard keys, HTTP routes, gift->action mapping,
+tier thresholds (diamonds x repeat), queue, modes, idle, save/reload, start/stop, click-through,
+and the v0.2.4 shared rates / per-sticker dance moves / stage+star rules.
+
+Keyboard: on Linux the real binary runs under Xvfb and keys are sent with xdotool.
+Where xdotool is unavailable (macOS/Windows) the same hotkeys are driven through real egui
+passes by `cargo test --release hotkey_tests`, and each check reports that test's result.
+Writes tests/e2e_results.md."""
+import json, os, platform, re, shutil, subprocess, sys, time, urllib.request, urllib.parse
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 BIN = os.environ.get('BIN', os.path.join(ROOT, 'target/release/tiktok-shrine-live'))
 PORT = 18795
 BASE = f'http://127.0.0.1:{PORT}'
 WORK = '/tmp/e2e_shrine'
+XDOTOOL = shutil.which('xdotool')
 results = []
+
+# E2E keyboard check -> the headless Rust test that covers it (used when xdotool is absent)
+HOTKEY_CHECKS = [
+    ('key 1 -> pray test tier', 'key_1_enqueues_pray_at_test_tier'),
+    ('key 2 -> siamsi test tier', 'key_2_enqueues_siamsi_at_test_tier'),
+    ('key Q -> pray t1', 'pray_tier_keys_q_w_e_r_t_map_to_tiers_1_5'),
+    ('key W -> pray t2', 'pray_tier_keys_q_w_e_r_t_map_to_tiers_1_5'),
+    ('key E -> pray t3', 'pray_tier_keys_q_w_e_r_t_map_to_tiers_1_5'),
+    ('key R -> pray t4', 'pray_tier_keys_q_w_e_r_t_map_to_tiers_1_5'),
+    ('key T -> pray t5', 'pray_tier_keys_q_w_e_r_t_map_to_tiers_1_5'),
+    ('key A -> siamsi t1', 'siamsi_tier_keys_a_s_d_f_g_map_to_tiers_1_5'),
+    ('key S -> siamsi t2', 'siamsi_tier_keys_a_s_d_f_g_map_to_tiers_1_5'),
+    ('key D -> siamsi t3', 'siamsi_tier_keys_a_s_d_f_g_map_to_tiers_1_5'),
+    ('key F -> siamsi t4', 'siamsi_tier_keys_a_s_d_f_g_map_to_tiers_1_5'),
+    ('key G -> siamsi t5', 'siamsi_tier_keys_a_s_d_f_g_map_to_tiers_1_5'),
+    ('Q W E R T map to tiers 1..5', 'pray_tier_keys_q_w_e_r_t_map_to_tiers_1_5'),
+    ('A S D F G map to tiers 1..5', 'siamsi_tier_keys_a_s_d_f_g_map_to_tiers_1_5'),
+    ('Shift+3 selects test tier 3', 'shift_3_selects_test_tier_3'),
+    ('Delete clears the queue', 'delete_clears_the_queue'),
+    ('F8 toggles click-through', 'f8_toggles_click_through'),
+    ('F9 cycles background', 'f9_cycles_background_transparent_green_scene'),
+    ('F2 switches mode', 'f2_switches_mode'),
+    ('F2 cycles all 5 modes (shrine -> krathong -> cat -> dance -> dunk)', 'f2_cycles_all_5_modes_in_order'),
+    ('F1 opens/closes settings', 'f1_opens_and_closes_settings'),
+]
+QUIT_TEST = 'cmd_q_requests_window_close'
+
+
+def run_hotkey_tests():
+    """Drive the hotkeys through real egui passes headlessly; returns {test_name: passed}."""
+    p = subprocess.run(['cargo', 'test', '--release', 'hotkey_tests'], cwd=ROOT,
+                       capture_output=True, text=True, timeout=1800)
+    ok = {}
+    for line in (p.stdout + p.stderr).splitlines():
+        m = re.match(r'test app::hotkey_tests::(\w+) \.\.\. (ok|FAILED)', line.strip())
+        if m:
+            ok[m.group(1)] = m.group(2) == 'ok'
+    return ok
 
 def check(name, ok, detail=''):
     results.append((name, bool(ok), detail))
@@ -73,39 +117,46 @@ def main():
         check('still idle: scene frozen (no moving effects)', abs(t2 - t1) < 1e-4, f'{t1:.3f} -> {t2:.3f}')
 
         # ---------------- keyboard
-        win = subprocess.run(['xdotool', 'search', '--name', '^TikTok Shrine Live$'], capture_output=True, text=True).stdout.split()
-        if not win:
-            check('find overlay window (xdotool)', False)
+        hotkey_ok = {}
+        win = []
+        if not XDOTOOL:
+            hotkey_ok = run_hotkey_tests()
+            for label, tname in HOTKEY_CHECKS:
+                check(label, hotkey_ok.get(tname, False), f'headless egui pass: hotkey_tests::{tname}')
         else:
-            w = win[0]
-            before = state()['shows_started'] + state()['queue_len']
-            keys = [('1', 'pray test tier'), ('2', 'siamsi test tier'), ('q', 'pray t1'), ('w', 'pray t2'), ('e', 'pray t3'), ('r', 'pray t4'), ('t', 'pray t5'),
-                    ('a', 'siamsi t1'), ('s', 'siamsi t2'), ('d', 'siamsi t3'), ('f', 'siamsi t4'), ('g', 'siamsi t5')]
-            for k, label in keys:
-                n0 = state(); c0 = n0['shows_started'] + n0['queue_len']
-                xkey(w, k)
-                n1 = wait_for(lambda s: s['shows_started'] + s['queue_len'] > c0, 3)
-                check(f'key {k.upper()} -> {label}', n1['shows_started'] + n1['queue_len'] == c0 + 1)
-            q = state()
-            want = [1, 2, 3, 4, 5]
-            got = [x['tier'] for x in q['queue'] if x['action'] == 'Pray'][-5:]
-            check('Q W E R T map to tiers 1..5', got == want, str(got))
-            got = [x['tier'] for x in q['queue'] if x['action'] == 'Siamsi'][-5:]
-            check('A S D F G map to tiers 1..5', got == want, str(got))
-            xkey(w, 'shift+3'); check('Shift+3 selects test tier 3', state()['test_tier'] == 3)
-            xkey(w, 'Delete'); check('Delete clears the queue', state()['queue_len'] == 0)
-            ct = state()['click_through']; xkey(w, 'F8'); check('F8 toggles click-through', state()['click_through'] != ct)
-            xkey(w, 'F8')
-            bg = state()['background']; xkey(w, 'F9'); bg2 = state()['background']; check('F9 cycles background', bg2 != bg, f'{bg} -> {bg2}')
-            xkey(w, 'F9'); xkey(w, 'F9')
-            th = state()['theme']; xkey(w, 'F2'); th2 = state()['theme']; check('F2 switches mode', th != th2, f'{th} -> {th2}')
-            xkey(w, 'F2'); th3 = state()['theme']
-            xkey(w, 'F2'); th4 = state()['theme']
-            xkey(w, 'F2'); th5 = state()['theme']
-            check('F2 cycles all 5 modes (shrine -> krathong -> cat -> dance -> dunk)', [th, th2, th3, th4, th5] == ['shrine', 'krathong', 'cat', 'dance', 'dunk'], f'{th} -> {th2} -> {th3} -> {th4} -> {th5}')
-            get('/control?mode=shrine'); wait_for(lambda s: s['theme'] == 'shrine')
-            so = state()['settings_open']; xkey(w, 'F1'); check('F1 opens/closes settings', state()['settings_open'] != so)
-            xkey(w, 'F1')
+            win = subprocess.run(['xdotool', 'search', '--name', '^TikTok Shrine Live$'], capture_output=True, text=True).stdout.split()
+            if not win:
+                check('find overlay window (xdotool)', False)
+            else:
+                w = win[0]
+                before = state()['shows_started'] + state()['queue_len']
+                keys = [('1', 'pray test tier'), ('2', 'siamsi test tier'), ('q', 'pray t1'), ('w', 'pray t2'), ('e', 'pray t3'), ('r', 'pray t4'), ('t', 'pray t5'),
+                        ('a', 'siamsi t1'), ('s', 'siamsi t2'), ('d', 'siamsi t3'), ('f', 'siamsi t4'), ('g', 'siamsi t5')]
+                for k, label in keys:
+                    n0 = state(); c0 = n0['shows_started'] + n0['queue_len']
+                    xkey(w, k)
+                    n1 = wait_for(lambda s: s['shows_started'] + s['queue_len'] > c0, 3)
+                    check(f'key {k.upper()} -> {label}', n1['shows_started'] + n1['queue_len'] == c0 + 1)
+                q = state()
+                want = [1, 2, 3, 4, 5]
+                got = [x['tier'] for x in q['queue'] if x['action'] == 'Pray'][-5:]
+                check('Q W E R T map to tiers 1..5', got == want, str(got))
+                got = [x['tier'] for x in q['queue'] if x['action'] == 'Siamsi'][-5:]
+                check('A S D F G map to tiers 1..5', got == want, str(got))
+                xkey(w, 'shift+3'); check('Shift+3 selects test tier 3', state()['test_tier'] == 3)
+                xkey(w, 'Delete'); check('Delete clears the queue', state()['queue_len'] == 0)
+                ct = state()['click_through']; xkey(w, 'F8'); check('F8 toggles click-through', state()['click_through'] != ct)
+                xkey(w, 'F8')
+                bg = state()['background']; xkey(w, 'F9'); bg2 = state()['background']; check('F9 cycles background', bg2 != bg, f'{bg} -> {bg2}')
+                xkey(w, 'F9'); xkey(w, 'F9')
+                th = state()['theme']; xkey(w, 'F2'); th2 = state()['theme']; check('F2 switches mode', th != th2, f'{th} -> {th2}')
+                xkey(w, 'F2'); th3 = state()['theme']
+                xkey(w, 'F2'); th4 = state()['theme']
+                xkey(w, 'F2'); th5 = state()['theme']
+                check('F2 cycles all 5 modes (shrine -> krathong -> cat -> dance -> dunk)', [th, th2, th3, th4, th5] == ['shrine', 'krathong', 'cat', 'dance', 'dunk'], f'{th} -> {th2} -> {th3} -> {th4} -> {th5}')
+                get('/control?mode=shrine'); wait_for(lambda s: s['theme'] == 'shrine')
+                so = state()['settings_open']; xkey(w, 'F1'); check('F1 opens/closes settings', state()['settings_open'] != so)
+                xkey(w, 'F1')
         clear_all()
 
         # ---------------- HTTP event routes
@@ -134,7 +185,7 @@ def main():
 
         # ---------------- tiers (diamonds x repeat)
         clear_all()
-        cases = [(1, 1, 1), (9, 1, 1), (10, 1, 2), (99, 1, 2), (100, 1, 3), (999, 1, 3), (1000, 1, 4), (9999, 1, 4), (10000, 1, 5), (1, 10, 2), (5, 20, 3), (1, 1000, 4), (500, 20, 5)]
+        cases = [(1, 1, 1), (4, 1, 1), (5, 1, 2), (19, 1, 2), (20, 1, 3), (29, 1, 3), (30, 1, 4), (99, 1, 4), (100, 1, 5), (1000, 1, 5), (1, 5, 2), (5, 4, 3), (1, 30, 4), (1, 100, 5), (500, 20, 5)]
         ok_all = True; det = []
         for d, rep, want in cases:
             get('/control?clear=1'); time.sleep(0.1)
@@ -145,12 +196,12 @@ def main():
             got = ent[-1]['tier'] if ent else None
             det.append(f'{d}x{rep}->{got}')
             if got != want: ok_all = False
-        check('5 tier thresholds incl. diamonds x repeat (0/10/100/1000/10000)', ok_all, ', '.join(det))
+        check('5 tier thresholds incl. diamonds x repeat (0/5/20/30/100)', ok_all, ', '.join(det))
         get('/control?clear=1')
         get('/gift?gift_name=Rose&user=combo&diamonds=1&repeat=5')
         s = wait_for(lambda s: any(e and e['user'] == 'combo' for e in [s['current']] + s['queue']), 3)
         ent = [e for e in [s['current']] + s['queue'] if e and e['user'] == 'combo']
-        check('combo streak (repeat=5) plays once with summed value (max_plays_per_gift=1)', len(ent) == 1 and ent[0]['tier'] == 1, str(ent))
+        check('combo streak (repeat=5) plays once with summed value (max_plays_per_gift=1)', len(ent) == 1 and ent[0]['tier'] == 2, str(ent))
 
         # ---------------- 10 rapid gifts
         get('/control?clear=1')
@@ -206,7 +257,7 @@ def main():
         s = wait_for(lambda s: s['current'] is None, 20)
         q = urllib.parse.quote
         for u in ['แมวA', 'แมวB', 'แมวC']:
-            get(f'/gift?gift_name=Rose&user={q(u)}&diamonds=100')
+            get(f'/gift?gift_name=Rose&user={q(u)}&diamonds=30')
         s = wait_for(lambda s: s['current'] is not None and len(s['line']) == 2, 4)
         check('cat: 3 senders -> front cat + 2 cats visible in line', s['current'] and s['current']['user'] == 'แมวA' and [e['user'] for e in s['line']] == ['แมวB', 'แมวC'], f"current={s['current'] and s['current']['user']} line={s['line']}")
         seen = set(); cards = set(); t0 = time.time()
@@ -229,9 +280,11 @@ def main():
         check('runtime mode switch -> dance (โหมดเต้น)', s['theme'] == 'dance')
         s = wait_for(lambda s: s['current'] is None, 20)
         q = urllib.parse.quote
+        # hall dancers run concurrently on their own clock, so stagger arrivals to make the lead succession observable
         for u in ['เต้นA', 'เต้นB', 'เต้นC']:
-            get(f'/gift?gift_name=Rose&user={q(u)}&diamonds=100')
-        s = wait_for(lambda s: s['current'] is not None and len(s['line']) == 2, 4)
+            get(f'/gift?gift_name=Rose&user={q(u)}&diamonds=20')
+            time.sleep(1.5)
+        s = wait_for(lambda s: s['current'] is not None and len(s['line']) == 2, 6)
         check('dance: 3 senders -> lead + 2 on the floor', s['current'] and s['current']['user'] == 'เต้นA' and [e['user'] for e in s['line']] == ['เต้นB', 'เต้นC'], f"current={s['current'] and s['current']['user']} line={s['line']}")
         seen = set(); cards = set(); t0 = time.time()
         while time.time() - t0 < 20:
@@ -244,7 +297,19 @@ def main():
         check('dance: walk then dance phases', {'walk', 'dance'} <= seen or 'dance' in seen, str(sorted(x for x in seen if x)))
         check('dance: result is challenge card only (no lucky numbers)', cards <= {'challenge'} and 'challenge' in cards, str(cards))
         s = wait_for(lambda s: s['current'] is not None and s['current']['user'] == 'เต้นB', 25)
-        check('dance: line advances to next sender', s['current'] and s['current']['user'] == 'เต้นB' and [e['user'] for e in s['line']] == ['เต้นC'], f"line={s['line']}")
+        c = s.get('current')
+        seq = [(c['user'] if c else None, [e['user'] for e in s.get('line') or []])]
+        t0 = time.time()
+        while time.time() - t0 < 20:
+            st = state(); c = st.get('current')
+            lead = c['user'] if c else None
+            if lead != seq[-1][0]:
+                seq.append((lead, [e['user'] for e in st.get('line') or []]))
+                if lead is None: break
+            time.sleep(0.1)
+        check('dance: lead advances B -> C then clears (hall dancers leave on their own clock)',
+              [u for u, _ in seq] == ['เต้นB', 'เต้นC', None] and seq[0][1] == ['เต้นC'] and seq[1][1] == [],
+              f"succession={seq}")
         get('/control?clear=1')
 
         # ---------------- dunk mode: queue, t5 instant dunk, splash credits the sender, no lucky numbers
@@ -292,7 +357,10 @@ def main():
         s = state()
         check('dance flood: app still serving after 50 senders / 10s', s.get('theme') == 'dance' and 'live_units' in s, str(s.get('theme')))
         check('dance flood: live records stay bounded', (s.get('live_units') or 0) <= 250, f"live_units={s.get('live_units')} queue_len={s.get('queue_len')} waiting_extra={s.get('waiting_extra')}")
-        check('dance flood: not one-queue-entry-per-gift', (s.get('queue_len') or 0) <= 60 and len(s.get('line') or []) <= 8 and (s.get('party') or (s.get('combo') or 1) >= 2), f"queue_len={s.get('queue_len')} line={len(s.get('line') or [])} party={s.get('party')} combo={s.get('combo')} gifts={s.get('gifts_received')}")
+        hall = s.get('hall') or {}
+        # hall holds max_floor + max_stage + 1 star; line excludes the lead
+        line_cap = (hall.get('max_floor') or 14) + (hall.get('max_stage') or 6)
+        check('dance flood: not one-queue-entry-per-gift', (s.get('queue_len') or 0) <= 60 and len(s.get('line') or []) <= line_cap and (s.get('party') or (s.get('combo') or 1) >= 2), f"queue_len={s.get('queue_len')} line={len(s.get('line') or [])}/{line_cap} party={s.get('party')} combo={s.get('combo')} gifts={s.get('gifts_received')}")
         check('dance flood: party mode or overflow badge engaged', s.get('party') or (s.get('waiting_extra') or 0) > 0 or (s.get('combo') or 1) >= 2, f"party={s.get('party')} waiting_extra={s.get('waiting_extra')} combo={s.get('combo')}")
         t1 = time.time()
         drained = False
@@ -315,6 +383,70 @@ def main():
         check('dunk flood: repeated throws merge or enter party', s.get('combo', 1) >= 2 or s.get('party') or s.get('queue_len', 99) <= 1, f"combo={s.get('combo')} party={s.get('party')} queue_len={s.get('queue_len')}")
         check('dunk flood: still serving', s.get('theme') == 'dunk' and (s.get('live_units') or 0) <= 250, f"live_units={s.get('live_units')}")
         get('/control?clear=1')
+
+        # ---------------- v0.2.4: shared rates, per-sticker dance moves, stage + star
+        r = state().get('rates') or {}
+        check('v0.2.4 shared rates: stage 30 / star auto / tier5_auto', r.get('stage_diamonds') == 30 and r.get('star_mode') == 'auto' and r.get('tier5_auto') is True, json.dumps(r, ensure_ascii=False))
+        check('v0.2.4 shared rates: five reachable tiers 0/5/20/30/100', r.get('tier_mins') == [0, 5, 20, 30, 100], str(r.get('tier_mins')))
+        check('v0.2.4 shared rates: star cutoff = priciest mapped sticker (Hand Heart 100)', r.get('star_diamonds') == 100, f"star_diamonds={r.get('star_diamonds')}")
+
+        def idle_now(timeout=25):
+            get('/control?clear=1')
+            return wait_for(lambda s: s.get('current') is None and not s.get('queue'), timeout)
+
+        def sendAndWait(gift, user, diamonds, timeout=10):
+            get(f'/gift?gift_name={q(gift)}&user={q(user)}&diamonds={diamonds}')
+            s = wait_for(lambda s: (s.get('current') or {}).get('user') == user, timeout)
+            return s.get('current') or {}
+
+        # one shared rate table: the same diamonds must give the same tier in every mode
+        got = {}
+        for m in ['shrine', 'krathong', 'cat', 'dance', 'dunk']:
+            get(f'/control?mode={m}'); wait_for(lambda s: s['theme'] == m)
+            idle_now()
+            got[m] = sendAndWait('Doughnut', 'เรท' + m, 30).get('tier')
+        check('v0.2.4 shared rates: 30 diamonds = tier 4 in all 5 modes', all(v == 4 for v in got.values()), str(got))
+
+        # each mapped sticker keeps its configured move; role follows the shared stage/star cutoffs
+        get('/control?mode=dance'); wait_for(lambda s: s['theme'] == 'dance')
+        want = [('Rose', 1, 'wave', 'floor'), ('TikTok', 1, 'jump', 'floor'), ('Finger Heart', 5, 'freeze', 'floor'),
+                ('Perfume', 20, 'fan', 'floor'), ('Doughnut', 30, 'crab', 'stage'), ('Hand Heart', 100, 'mirror', 'star')]
+        mdet, rdet = [], []
+        mok = rok = True
+        for name, d, mv, role in want:
+            idle_now()
+            c = sendAndWait(name, 'ท่า' + name.replace(' ', ''), d)
+            mdet.append(f"{name}->{c.get('move')}")
+            rdet.append(f"{d}->{c.get('role')}")
+            if c.get('move') != mv: mok = False
+            if c.get('role') != role: rok = False
+        check('v0.2.4 dance: every mapped sticker gets its configured move (not random)', mok, ', '.join(mdet))
+        check('v0.2.4 dance: floor below 30, stage at 30, star at 100', rok, ', '.join(rdet))
+
+        idle_now()
+        c = sendAndWait('UnknownStickerXYZ', 'ท่าfallback', 20)
+        check('v0.2.4 dance: unmapped sticker uses the fixed tier move (tier 3 = spin)', c.get('move') == 'spin' and c.get('tier') == 3, f"move={c.get('move')} tier={c.get('tier')}")
+
+        idle_now()
+        for _ in range(3):
+            get(f"/gift?gift_name=Rose&user={q('คอมโบ')}&diamonds=1")
+        s = wait_for(lambda s: (s.get('current') or {}).get('user') == 'คอมโบ', 10)
+        c = s.get('current') or {}
+        check('v0.2.4 dance: combo xN keeps the same sticker move', c.get('move') == 'wave' and (c.get('combo') or 1) >= 2, f"move={c.get('move')} combo={c.get('combo')}")
+
+        # star flag on the shrine / krathong result
+        sdet = []
+        sok = True
+        for m in ['shrine', 'krathong']:
+            get(f'/control?mode={m}'); wait_for(lambda s: s['theme'] == m)
+            idle_now()
+            hi = sendAndWait('Hand Heart', 'สตาร์' + m, 100)
+            idle_now()
+            lo = sendAndWait('Perfume', 'ไม่ใช่' + m, 20)
+            sdet.append(f"{m}:100={hi.get('star')},20={lo.get('star')}")
+            if hi.get('star') is not True or lo.get('star') is not False: sok = False
+        check('v0.2.4 star: Hand Heart 100 is star, Perfume 20 is not (shrine + krathong)', sok, ', '.join(sdet))
+        idle_now()
 
         get('/control?mode=shrine'); s = wait_for(lambda s: s['theme'] == 'shrine')
         check('runtime mode switch -> shrine', s['theme'] == 'shrine')
@@ -366,14 +498,20 @@ def main():
                 p.wait(5); check('Ctrl+Q quits', True)
             except subprocess.TimeoutExpired:
                 check('Ctrl+Q quits', False)
+        else:
+            check('Ctrl+Q quits', hotkey_ok.get(QUIT_TEST, False), f'headless egui pass: hotkey_tests::{QUIT_TEST} (ViewportCommand::Close)')
         log_txt = open(os.path.join(WORK, 'app.log'), encoding='utf-8', errors='replace').read()
         check('no panic in log', 'panicked' not in log_txt)
     finally:
         if p.poll() is None: p.kill()
     passed = sum(1 for r in results if r[1])
+    ver = subprocess.run([BIN, '--version'], capture_output=True, text=True).stdout.strip()
+    keys = 'xdotool under Xvfb (real OS key events)' if XDOTOOL else 'cargo test hotkey_tests (real egui passes, headless)'
     os.makedirs(os.path.join(ROOT, 'tests'), exist_ok=True)
     with open(os.path.join(ROOT, 'tests/e2e_results.md'), 'w', encoding='utf-8') as f:
-        f.write(f'# E2E results ({time.strftime("%Y-%m-%d %H:%M %Z")})\n\n{passed}/{len(results)} passed\n\n| # | test | result | detail |\n|---|---|---|---|\n')
+        f.write(f'# E2E results ({time.strftime("%Y-%m-%d %H:%M %Z")})\n\n{passed}/{len(results)} passed\n\n')
+        f.write(f'- binary: `{ver}`\n- platform: {platform.system()} {platform.machine()}\n- keyboard: {keys}\n\n')
+        f.write('| # | test | result | detail |\n|---|---|---|---|\n')
         for i, (n, ok, d) in enumerate(results, 1):
             f.write(f'| {i} | {n} | {"PASS" if ok else "FAIL"} | {d} |\n')
     print(f'\n{passed}/{len(results)} passed')

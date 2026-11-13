@@ -2005,7 +2005,7 @@ impl ShrineApp {
             // cat mode: the result is always a thank-you card, never lucky numbers
             self.cats.shows().next().map(|s| serde_json::json!({"action": format!("{:?}", s.action), "theme": "cat", "user": s.user, "tier": s.tier + 1, "t": s.t, "phase": s.phase(rv), "card": "thanks"}))
         } else if self.theme() == Theme::Dance {
-            self.dancers.lead().map(|s| serde_json::json!({"action": "Pray", "theme": "dance", "user": s.user, "tier": s.tier + 1, "t": s.t, "phase": if self.dancers.in_party() { "party" } else { s.phase_name() }, "card": if self.dancers.in_party() { "party" } else { "challenge" }, "venue": s.venue.key(), "challenge": s.challenge, "combo": s.combo, "party": self.dancers.in_party()}))
+            self.dancers.lead().map(|s| serde_json::json!({"action": "Pray", "theme": "dance", "user": s.user, "tier": s.tier + 1, "t": s.t, "phase": if self.dancers.in_party() { "party" } else { s.phase_name() }, "card": if self.dancers.in_party() { "party" } else { "challenge" }, "venue": s.venue.key(), "challenge": s.challenge, "combo": s.combo, "party": self.dancers.in_party(), "move": s.move_now().key(), "role": s.role.key(), "on_stage": s.role != dance::DanceRole::Floor, "star": s.role == dance::DanceRole::Star, "gift": s.gift, "diamonds": s.diamonds}))
         } else if self.theme() == Theme::Dunk {
             self.dunkers.lead().map(|s| serde_json::json!({"action": "Pray", "theme": "dunk", "user": s.user, "tier": s.tier + 1, "t": s.t, "phase": if self.dunkers.in_party() { "party" } else { s.phase_name() }, "card": if self.dunkers.in_party() { "party" } else if s.will_dunk { "splash" } else { "throw" }, "meter": self.dunkers.meter(), "dunk_by": self.dunkers.last_dunk_by(), "combo": s.combo, "party": self.dunkers.in_party()}))
         } else {
@@ -2018,7 +2018,7 @@ impl ShrineApp {
                     (Action::Siamsi, Theme::Shrine) => "fortune",
                     (Action::Siamsi, Theme::Krathong) => "blessing",
                 };
-                serde_json::json!({"action": format!("{:?}", s.action), "theme": s.theme.key(), "user": s.user, "tier": s.tier + 1, "t": s.t, "card": card})
+                serde_json::json!({"action": format!("{:?}", s.action), "theme": s.theme.key(), "user": s.user, "tier": s.tier + 1, "t": s.t, "card": card, "star": s.star, "gift": s.gift, "diamonds": s.diamonds})
             })
         };
         let queued: Vec<serde_json::Value> = if self.theme() == Theme::Cat {
@@ -2031,6 +2031,7 @@ impl ShrineApp {
             self.queue.iter().map(|s| serde_json::json!({"action": format!("{:?}", s.action), "user": s.user, "tier": s.tier + 1})).collect()
         };
         let (w, h) = self.cfg.window_size();
+        let star_cut = self.cfg.star_cutoff(self.mapped_max_star());
         let v = serde_json::json!({
             "version": env!("CARGO_PKG_VERSION"),
             "theme": self.theme().key(),
@@ -2090,6 +2091,18 @@ impl ShrineApp {
                 _ => self.queue.len() + self.particles.len() + self.floating.len(),
             },
             "settings_open": self.settings_open,
+            "rates": {
+                "stage_diamonds": self.cfg.rates.stage_diamonds,
+                "star_mode": self.cfg.rates.star_mode,
+                "star_diamonds": star_cut,
+                "tier5_auto": self.cfg.rates.tier5_auto,
+                "tier_mins": self.cfg.effective_min_diamonds(star_cut),
+            },
+            "hall": {
+                "venue": self.cfg.dance.venue,
+                "max_floor": self.cfg.dance.max_floor,
+                "max_stage": self.cfg.dance.max_stage,
+            },
             "frame": self.frame,
             "time": self.time,
             "config_path": self.cfg_path.display().to_string(),
@@ -3388,5 +3401,200 @@ mod sim_tests {
         assert!(names.len() >= 2, "mixed test names, got {names:?}");
         let kinds: std::collections::HashSet<_> = plan.iter().map(|p| p.2).collect();
         assert!(kinds.len() >= 2, "mixed stickers, got {kinds:?}");
+    }
+}
+
+/// Hotkey coverage without a display: each test drives a real egui pass through
+/// `handle_keys`, so the assertions exercise the same path the OS key events take.
+/// Stands in for the xdotool section of scripts/e2e_test.py on macOS/Windows.
+#[cfg(test)]
+mod hotkey_tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::events::BridgeState;
+    use std::sync::mpsc;
+
+    fn headless() -> (ShrineApp, egui::Context) {
+        let dir = std::env::temp_dir().join(format!("shrine-hotkey-{}", std::process::id()));
+        let (_tx, rx) = mpsc::channel::<Incoming>();
+        let bridge = Arc::new(Mutex::new(BridgeState {
+            username: String::new(),
+            sign_key: String::new(),
+            node: "node".into(),
+            script: dir.join("bridge.cjs"),
+            enabled: false,
+            reconnect: std::time::Duration::from_secs(5),
+            generation: 0,
+            child: None,
+            stdin: None,
+            status: String::new(),
+        }));
+        let updater = crate::updater::Updater::new("", "", "", "", dir.clone(), env!("CARGO_PKG_VERSION").into(), "0".into());
+        let app = ShrineApp::new(AppInit {
+            cfg: Config::builtin(),
+            cfg_path: dir.join("config.toml"),
+            rx,
+            bridge,
+            assets_dir: dir.join("assets"),
+            shot: None,
+            demo: vec![],
+            seed: Some(7),
+            open_settings: false,
+            start_stopped: false,
+            state: Arc::new(Mutex::new(String::from("{}"))),
+            theme: None,
+            record: None,
+            updater,
+        });
+        (app, egui::Context::default())
+    }
+
+    fn press(app: &mut ShrineApp, ctx: &egui::Context, key: Key, shift: bool, cmd: bool) -> Vec<ViewportCommand> {
+        let modifiers = egui::Modifiers { shift, command: cmd, ..Default::default() };
+        let raw = egui::RawInput {
+            events: vec![
+                egui::Event::ModifiersChanged(modifiers),
+                egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers },
+                egui::Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers },
+            ],
+            ..Default::default()
+        };
+        ctx.begin_pass(raw);
+        app.handle_keys(ctx);
+        ctx.end_pass().viewport_output.get(&ViewportId::ROOT).map(|v| v.commands.clone()).unwrap_or_default()
+    }
+
+    fn queued(app: &ShrineApp) -> usize {
+        app.queue.len() + usize::from(app.current.is_some())
+    }
+
+    #[test]
+    fn key_1_enqueues_pray_at_test_tier() {
+        let (mut a, ctx) = headless();
+        let n0 = queued(&a);
+        press(&mut a, &ctx, Key::Num1, false, false);
+        assert_eq!(queued(&a), n0 + 1);
+        assert_eq!(a.queue.back().unwrap().action, Action::Pray);
+        assert_eq!(a.queue.back().unwrap().tier, a.test_tier);
+    }
+
+    #[test]
+    fn key_2_enqueues_siamsi_at_test_tier() {
+        let (mut a, ctx) = headless();
+        let n0 = queued(&a);
+        press(&mut a, &ctx, Key::Num2, false, false);
+        assert_eq!(queued(&a), n0 + 1);
+        assert_eq!(a.queue.back().unwrap().action, Action::Siamsi);
+    }
+
+    #[test]
+    fn pray_tier_keys_q_w_e_r_t_map_to_tiers_1_5() {
+        let (mut a, ctx) = headless();
+        for k in [Key::Q, Key::W, Key::E, Key::R, Key::T] {
+            press(&mut a, &ctx, k, false, false);
+        }
+        let got: Vec<_> = a.queue.iter().map(|s| (s.action, s.tier + 1)).collect();
+        assert_eq!(got, vec![(Action::Pray, 1), (Action::Pray, 2), (Action::Pray, 3), (Action::Pray, 4), (Action::Pray, 5)]);
+    }
+
+    #[test]
+    fn siamsi_tier_keys_a_s_d_f_g_map_to_tiers_1_5() {
+        let (mut a, ctx) = headless();
+        for k in [Key::A, Key::S, Key::D, Key::F, Key::G] {
+            press(&mut a, &ctx, k, false, false);
+        }
+        let got: Vec<_> = a.queue.iter().map(|s| (s.action, s.tier + 1)).collect();
+        assert_eq!(got, vec![(Action::Siamsi, 1), (Action::Siamsi, 2), (Action::Siamsi, 3), (Action::Siamsi, 4), (Action::Siamsi, 5)]);
+    }
+
+    #[test]
+    fn shift_3_selects_test_tier_3() {
+        let (mut a, ctx) = headless();
+        press(&mut a, &ctx, Key::Num3, true, false);
+        assert_eq!(a.test_tier + 1, 3);
+        let n0 = queued(&a);
+        press(&mut a, &ctx, Key::Num1, false, false);
+        assert_eq!(queued(&a), n0 + 1);
+        assert_eq!(a.queue.back().unwrap().tier + 1, 3, "key 1 uses the selected test tier");
+    }
+
+    #[test]
+    fn delete_clears_the_queue() {
+        let (mut a, ctx) = headless();
+        for k in [Key::Q, Key::W, Key::E] {
+            press(&mut a, &ctx, k, false, false);
+        }
+        assert!(queued(&a) >= 3);
+        press(&mut a, &ctx, Key::Delete, false, false);
+        assert_eq!(a.queue.len(), 0);
+    }
+
+    #[test]
+    fn f8_toggles_click_through() {
+        let (mut a, ctx) = headless();
+        let before = a.cfg.window.click_through;
+        press(&mut a, &ctx, Key::F8, false, false);
+        assert_ne!(a.cfg.window.click_through, before);
+        press(&mut a, &ctx, Key::F8, false, false);
+        assert_eq!(a.cfg.window.click_through, before);
+    }
+
+    #[test]
+    fn f9_cycles_background_transparent_green_scene() {
+        let (mut a, ctx) = headless();
+        a.cfg.window.background = "transparent".into();
+        let mut seen = vec![a.cfg.window.background.clone()];
+        for _ in 0..3 {
+            press(&mut a, &ctx, Key::F9, false, false);
+            seen.push(a.cfg.window.background.clone());
+        }
+        assert_eq!(seen, ["transparent", "green", "scene", "transparent"]);
+    }
+
+    #[test]
+    fn f2_switches_mode() {
+        let (mut a, ctx) = headless();
+        let before = a.theme();
+        press(&mut a, &ctx, Key::F2, false, false);
+        assert_ne!(a.theme(), before);
+    }
+
+    #[test]
+    fn f2_cycles_all_5_modes_in_order() {
+        let (mut a, ctx) = headless();
+        a.cfg.theme.mode = "shrine".into();
+        let mut seen = vec![a.theme().key()];
+        for _ in 0..4 {
+            press(&mut a, &ctx, Key::F2, false, false);
+            seen.push(a.theme().key());
+        }
+        assert_eq!(seen, ["shrine", "krathong", "cat", "dance", "dunk"]);
+        press(&mut a, &ctx, Key::F2, false, false);
+        assert_eq!(a.theme().key(), "shrine", "cycle wraps back to shrine");
+    }
+
+    #[test]
+    fn f1_opens_and_closes_settings() {
+        let (mut a, ctx) = headless();
+        let before = a.settings_open;
+        press(&mut a, &ctx, Key::F1, false, false);
+        assert_ne!(a.settings_open, before);
+        press(&mut a, &ctx, Key::F1, false, false);
+        assert_eq!(a.settings_open, before);
+    }
+
+    #[test]
+    fn cmd_q_requests_window_close() {
+        let (mut a, ctx) = headless();
+        let cmds = press(&mut a, &ctx, Key::Q, false, true);
+        assert!(cmds.iter().any(|c| matches!(c, ViewportCommand::Close)), "Cmd/Ctrl+Q must close the window, got {cmds:?}");
+    }
+
+    #[test]
+    fn cmd_q_does_not_enqueue_a_pray() {
+        let (mut a, ctx) = headless();
+        let n0 = queued(&a);
+        press(&mut a, &ctx, Key::Q, false, true);
+        assert_eq!(queued(&a), n0, "Cmd+Q is quit, not the pray tier-1 hotkey");
     }
 }

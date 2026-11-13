@@ -725,24 +725,33 @@ mod tests {
     #[test]
     fn tiers_thresholds() {
         let c = Config::builtin();
-        // affordable defaults: 0 / 5 / 30 / 100, t5 stored 100 (Hand Heart / auto star)
+        // affordable defaults: one tier per catalog price — Rose/TikTok 1, Finger Heart 5,
+        // Perfume 20, Doughnut 30 (also the stage cutoff), Hand Heart 100 (t5 / auto star)
         assert_eq!(c.tier_for(0), 0);
         assert_eq!(c.tier_for(4), 0);
         assert_eq!(c.tier_for(5), 1);
-        assert_eq!(c.tier_for(29), 1);
-        assert_eq!(c.tier_for(30), 2);
-        assert_eq!(c.tier_for(99), 2);
-        // t4 and t5 share the 100 cutoff; last match is step 5 / star
+        assert_eq!(c.tier_for(19), 1);
+        assert_eq!(c.tier_for(20), 2);
+        assert_eq!(c.tier_for(29), 2);
+        assert_eq!(c.tier_for(30), 3);
+        assert_eq!(c.tier_for(99), 3);
         assert_eq!(c.tier_for(100), 4);
         assert_eq!(c.tier_for(5_000_000), 4);
         assert_eq!(c.tier_for(1 * 150), 4);
         assert_eq!(c.star_cutoff(100), 100);
-        assert_eq!(c.tier_for_with_star(99, 100), 2);
+        assert_eq!(c.tier_for_with_star(99, 100), 3);
         assert_eq!(c.tier_for_with_star(100, 100), 4);
         assert!(c.is_star(100, 100));
         assert!(!c.is_star(99, 100));
         assert!(c.is_star(44999, 100));
         assert!(c.is_star(30, 30));
+        // every tier must be reachable, and thresholds must not decrease
+        let mins = c.effective_min_diamonds(c.star_cutoff(100));
+        assert_eq!(mins, vec![0, 5, 20, 30, 100]);
+        assert!(mins.windows(2).all(|w| w[0] < w[1]), "tier thresholds must strictly increase: {mins:?}");
+        for (i, m) in mins.iter().enumerate() {
+            assert_eq!(c.tier_for_with_star(*m, 100), i, "tier {} unreachable at {m} diamonds", i + 1);
+        }
         assert!(!c.gifts.map.keys().any(|k| k.eq_ignore_ascii_case("Galaxy") || k.eq_ignore_ascii_case("Lion") || k.eq_ignore_ascii_case("TikTok Universe") || k == "9101" || k == "11046" || k == "6369"));
         assert!(!c.dance.moves.keys().any(|k| k.eq_ignore_ascii_case("Galaxy") || k.eq_ignore_ascii_case("Lion") || k.eq_ignore_ascii_case("TikTok Universe")));
         assert_eq!(c.dance.moves.get("Hand Heart").map(|s| s.as_str()), Some("mirror"));

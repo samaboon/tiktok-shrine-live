@@ -123,13 +123,15 @@
 | ลากเมาส์ซ้าย | ย้ายหน้าต่าง |
 
 ## ระดับความหรูหรา (ตั้งเพชรขั้นต่ำได้)
+ค่าเริ่มต้นเป็นบันไดของไม่แพงในแคตตาล็อก: Rose / TikTok 1 → ขั้น 1, Finger Heart 5 → ขั้น 2, Perfume 20 → ขั้น 3, Doughnut 30 → ขั้น 4 (ขึ้นเวที), Hand Heart 100 → ขั้น 5 (สตาร์)
+
 | ระดับ | เพชร (ค่าเริ่มต้น) | ไหว้พระ+เลข | เซียมซี |
 |---|---|---|---|
 | 1 สายบุญ | 0+ | ![](screenshots/pray_t1_3_number.png) | ![](screenshots/siamsi_t1_3_fortune.png) |
-| 2 ผู้มีบุญ | 10+ | ![](screenshots/pray_t2_4_fireworks.png) | ![](screenshots/siamsi_t2_3_fortune.png) |
-| 3 เศรษฐีใจบุญ | 100+ | ![](screenshots/pray_t3_4_fireworks.png) | ![](screenshots/siamsi_t3_3_fortune.png) |
-| 4 มหาเศรษฐี | 1,000+ | ![](screenshots/pray_t4_4_fireworks.png) | ![](screenshots/siamsi_t4_3_fortune.png) |
-| 5 จักรพรรดิแห่งบุญ | 10,000+ | ![](screenshots/pray_t5_4_fireworks.png) | ![](screenshots/siamsi_t5_3_fortune.png) |
+| 2 ผู้มีบุญ | 5+ | ![](screenshots/pray_t2_4_fireworks.png) | ![](screenshots/siamsi_t2_3_fortune.png) |
+| 3 เศรษฐีใจบุญ | 20+ | ![](screenshots/pray_t3_4_fireworks.png) | ![](screenshots/siamsi_t3_3_fortune.png) |
+| 4 มหาเศรษฐี | 30+ | ![](screenshots/pray_t4_4_fireworks.png) | ![](screenshots/siamsi_t4_3_fortune.png) |
+| 5 จักรพรรดิแห่งบุญ | 100+ | ![](screenshots/pray_t5_4_fireworks.png) | ![](screenshots/siamsi_t5_3_fortune.png) |
 
 (ลายตารางหมากรุก = ส่วนที่โปร่งใส)
 
@@ -228,7 +230,8 @@ src/events.rs   trait EventSource, HttpSource, TikTokBridgeSource (Node bridge),
 src/config.rs   config.toml (serde) + ค่าเริ่มต้นฝังในโปรแกรม
 src/krathong.rs ฉากลอยกระทง (แม่น้ำ, ศาลา, กระทง)
 src/updater.rs  อัปเดตตัวเอง (GitHub Releases) + อัปเดตตัวเชื่อม TikTok
-scripts/e2e_test.py  ชุดทดสอบ end-to-end (คีย์, HTTP, ระดับ, คิว, แถวหลายคน, โหมด, save/reload) → tests/e2e_results.md
+scripts/e2e_test.py  ชุดทดสอบ end-to-end 96 ข้อ (คีย์, HTTP, ระดับ, คิว, แถวหลายคน, โหมด, เรทร่วม/เวที/สตาร์, save/reload) → tests/e2e_results.md
+                     21 ข้อคีย์บอร์ด: มี xdotool (Linux) ยิงคีย์จริง · ไม่มีก็รัน cargo test hotkey_tests (egui headless)
 bridge/         bridge.js (tiktok-live-connector) → bundle เป็น dist/bridge.cjs ด้วย esbuild
 ```
 **ทำไม eframe/egui** (แทน macroquad): ต้องการหน้าต่างโปร่งใส per-pixel + always-on-top + click-through + หลายหน้าต่าง (ตั้งค่าแยก) บน Windows/macOS ซึ่ง eframe รองรับครบผ่าน winit/glutin และ text shaping (harfrust) ทำให้สระ/วรรณยุกต์ไทยวางถูกตำแหน่ง
