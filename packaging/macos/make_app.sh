@@ -34,6 +34,9 @@ codesign --verify --deep --strict --verbose=2 "$APP"
 # dmg
 mkdir -p dist/dmg && cp -R "$APP" dist/dmg/ && ln -s /Applications dist/dmg/Applications
 cp docs/คู่มือ.md docs/ติดตั้ง-Mac.md dist/dmg/ 2>/dev/null || true
+# double-click first-open helper: clears quarantine on the installed app, then opens it
+cp "packaging/macos/เปิดครั้งแรก.command" dist/dmg/
+chmod +x "dist/dmg/เปิดครั้งแรก.command"
 hdiutil create -volname "TikTok Shrine Live" -srcfolder dist/dmg -ov -format UDZO "dist/TikTokShrineLive-macOS-universal.dmg"
 echo "built: dist/TikTokShrineLive-macOS-universal.dmg"
 # zip of the .app for the in-app updater (keeps signature/permissions)

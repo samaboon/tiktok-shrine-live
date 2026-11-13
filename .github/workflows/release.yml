@@ -32,11 +32,20 @@ jobs:
           ./dist/TikTokShrineLive/TikTokShrineLive.exe --which-node | tee which.txt
           grep -q '^bundled ' which.txt
           ls -la dist/*.zip
+      - name: Build one-click installer (Inno Setup 6 is preinstalled on the runner)
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$v" packaging\windows\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path dist\TikTokShrineLive-Setup-x64.exe)) { exit 1 }
+          Get-Item dist\TikTokShrineLive-Setup-x64.exe
       - uses: actions/upload-artifact@v5
         with:
           name: TikTokShrineLive-Windows-x64
           path: |
             dist/TikTokShrineLive-Windows-x64.zip
+            dist/TikTokShrineLive-Setup-x64.exe
             dist/runtime-node-win-x64.zip
 
   macos:
@@ -58,6 +67,7 @@ jobs:
           codesign -dv "dist/TikTok Shrine Live.app/Contents/MacOS/node"
           "dist/TikTok Shrine Live.app/Contents/MacOS/tiktok-shrine-live" --which-node | tee which.txt
           grep -q '^bundled ' which.txt
+          test -x "dist/dmg/เปิดครั้งแรก.command"
           ls -la dist/*.dmg dist/*.zip
       - uses: actions/upload-artifact@v5
         with:
@@ -141,6 +151,7 @@ jobs:
             out/**/*.zip
             out/**/*.dmg
             out/**/*.tar.gz
+            out/**/*.exe
             out/bridge/bridge.cjs
             out/bridge/bridge-version.json
             out/**/runtime-version.json

@@ -1,4 +1,4 @@
-# E2E results (2026-11-14 05:08 +07)
+# E2E results (2026-11-14 05:49 +07)
 
 110/110 passed
 
@@ -54,7 +54,7 @@
 | 44 | background mode green | PASS |  |
 | 45 | background mode scene | PASS |  |
 | 46 | background mode transparent | PASS |  |
-| 47 | transparent idle: ground props hidden | PASS | props_alpha=0.0 |
+| 47 | transparent idle: ground props hidden | PASS | props_alpha=0.029652956873178482 |
 | 48 | transparent show: props fade in | PASS | props_alpha=1.0 |
 | 49 | runtime mode switch -> krathong | PASS |  |
 | 50 | krathong: krathong is released and keeps floating | PASS | floating=1 |
@@ -62,7 +62,7 @@
 | 52 | cat: 3 senders -> front cat + 2 cats visible in line | PASS | current=แมวA line=[{'user': 'แมวB', 'x': -59.0}, {'user': 'แมวC', 'x': -59.0}] |
 | 53 | cat: walk -> pour -> eat -> card phases | PASS | ['card', 'eat', 'leave', 'pour', 'walk'] |
 | 54 | cat: result is thank-you card only (no lucky numbers) | PASS | {'thanks'} |
-| 55 | cat: line advances to next sender | PASS | line=[{'user': 'แมวC', 'x': 150.0}] |
+| 55 | cat: line advances to next sender | PASS | line=[{'user': 'แมวC', 'x': 167.0}] |
 | 56 | runtime mode switch -> dance (โหมดเต้น) | PASS |  |
 | 57 | dance: 3 senders -> lead + 2 on the floor | PASS | current=เต้นA line=[{'user': 'เต้นB', 'x': -80.0}, {'user': 'เต้นC', 'x': -80.0}] |
 | 58 | dance: walk then dance phases | PASS | ['dance', 'leave'] |
@@ -71,8 +71,8 @@
 | 61 | runtime mode switch -> dunk (ปาตกน้ำ) | PASS |  |
 | 62 | dunk: 3 senders -> thrower + 2 waiting | PASS | current=ปาA line=[{'user': 'ปาB', 'x': -80.0}, {'user': 'ปาC', 'x': -80.0}] |
 | 63 | dunk: t5 walks and throws | PASS | ['drop', 'throw', 'walk'] |
-| 64 | dunk: t5 instant dunk credits the sender | PASS | dunk_by=สมศรี cards={'splash', 'throw'} phases=['drop', 'throw', 'walk'] |
-| 65 | dunk: result is throw/splash card only (no lucky numbers) | PASS | {'splash', 'throw'} |
+| 64 | dunk: t5 instant dunk credits the sender | PASS | dunk_by=สมศรี cards={'throw', 'splash'} phases=['drop', 'throw', 'walk'] |
+| 65 | dunk: result is throw/splash card only (no lucky numbers) | PASS | {'throw', 'splash'} |
 | 66 | dance flood: 30 gifts from one sender accepted | PASS | gifts=77 g0=47 |
 | 67 | dance flood: same sender merged (combo or single live card) | PASS | combo=30 queue_len=0 party=True |
 | 68 | dance flood: app still serving after 50 senders / 10s | PASS | dance |
@@ -85,11 +85,11 @@
 | 75 | runtime mode switch -> pet (เลี้ยงแมว) | PASS |  |
 | 76 | pet: /state exposes cat + 3 meters + 10-trick price ladder | PASS | level=1 tricks=10 |
 | 77 | pet: cat + meters stay on screen while idle | PASS | idle=False |
-| 78 | pet: loneliness rises only after nobody plays for lonely_after | PASS | 12.0 -> 16.6 (idle > 20s) |
-| 79 | pet: fullness decays on its own | PASS | 57.4 -> 52.1 |
+| 78 | pet: loneliness rises only after nobody plays for lonely_after | PASS | 12.0 -> 16.0 (idle > 20s) |
+| 79 | pet: fullness decays on its own | PASS | 57.8 -> 52.3 |
 | 80 | pet: all 10 ladder gifts play their own gimmick | PASS | 10/10 mapped by catalog name |
-| 81 | pet: playing pet resets loneliness + idle timer | PASS | loneliness was 16.6 |
-| 82 | pet: feeding gift refills fullness | PASS | fullness before ladder 52.1 |
+| 81 | pet: playing pet resets loneliness + idle timer | PASS | loneliness was 16.0 |
+| 82 | pet: feeding gift refills fullness | PASS | fullness before ladder 52.3 |
 | 83 | pet: play card only (no lucky numbers) | PASS | {'play'} |
 | 84 | pet: bond levels the cat up (10 plays -> level 2+) | PASS | level=2 bond=5.0 title=แมวขี้อ้อน |
 | 85 | pet: unmapped gift picks the dearest affordable gimmick (150 -> fish_toy) | PASS | trick=fish_toy |
