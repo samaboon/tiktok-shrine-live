@@ -11,6 +11,10 @@ const INK: Color32 = Color32::from_rgb(48, 34, 40);
 const PINK: Color32 = Color32::from_rgb(255, 150, 175);
 const GOLD: Color32 = Color32::from_rgb(255, 208, 96);
 const HEART: Color32 = Color32::from_rgb(255, 105, 150);
+const LINE: Color32 = Color32::from_rgb(74, 52, 50);
+const IRIS: Color32 = Color32::from_rgb(226, 160, 70);
+const WOOD: Color32 = Color32::from_rgb(196, 150, 108);
+const WOOD_D: Color32 = Color32::from_rgb(140, 100, 66);
 
 pub const PET_X: f32 = 540.0;
 pub const BOWL_X: f32 = 800.0;
@@ -670,101 +674,230 @@ impl PetStage {
 
     fn draw_room(&self, cx: &Cx, g: f32) {
         let h = cx.vh;
-        cx.vgradient(-40.0, -40.0, VW + 40.0, g, Color32::from_rgb(255, 232, 214), Color32::from_rgb(250, 206, 186));
-        cx.rect(-40.0, g, VW + 40.0, h + 40.0, 0.0, Color32::from_rgb(206, 160, 124));
-        for i in 0..9 {
-            let y = g + 12.0 + i as f32 * 17.0;
-            cx.line((-40.0, y), (VW + 40.0, y), 2.0, rgba(170, 126, 96, 90.0 / 255.0));
+        // ผนังปูนครีมอุ่น + เสา/คานไม้แบบห้องญี่ปุ่น
+        cx.vgradient(-40.0, -40.0, VW + 40.0, g, Color32::from_rgb(255, 247, 232), Color32::from_rgb(250, 233, 210));
+        for px in [352.0, 764.0] {
+            cx.rect(px, -40.0, px + 16.0, g, 0.0, WOOD);
+            cx.rect(px, -40.0, px + 4.0, g, 0.0, with_a(WOOD_D, 0.5));
         }
-        // window with a slow day cycle (left wall, clear of the meters card)
+        cx.rect(-40.0, g - 12.0, VW + 40.0, g, 0.0, WOOD);
+        cx.rect(-40.0, g - 12.0, VW + 40.0, g - 8.0, 0.0, with_a(WOOD_D, 0.45));
+
+        // พื้นทาทามิ + ขอบผ้าเสื่อ (heri) สีคราม
+        cx.vgradient(-40.0, g, VW + 40.0, h + 40.0, Color32::from_rgb(198, 207, 144), Color32::from_rgb(172, 184, 120));
+        let mut yy = g + 7.0;
+        while yy < h + 40.0 {
+            cx.line((-40.0, yy), (VW + 40.0, yy), 1.0, rgba(120, 134, 78, 0.22));
+            yy += 7.0;
+        }
+        let heri = rgba(74, 86, 108, 0.85);
+        let mut mx = 0.0;
+        while mx < VW {
+            cx.rect(mx, g, mx + 6.0, h + 40.0, 0.0, heri);
+            mx += 216.0;
+        }
+        cx.rect(-40.0, g, VW + 40.0, g + 5.0, 0.0, heri);
+
+        // หน้าต่างโชจิเปิดออก: ท้องฟ้าอนิเมะ + กิ่งซากุระด้านนอก (กลางวัน/กลางคืนยังวนเหมือนเดิม)
         let (wx, wy, ww, wh) = (70.0, h * 0.33, 250.0, 200.0);
-        cx.rect(wx - 10.0, wy - 10.0, wx + ww + 10.0, wy + wh + 10.0, 18.0, Color32::from_rgb(255, 250, 240));
+        cx.rect(wx - 10.0, wy - 10.0, wx + ww + 10.0, wy + wh + 10.0, 10.0, WOOD_D);
+        cx.rect(wx - 5.0, wy - 5.0, wx + ww + 5.0, wy + wh + 5.0, 7.0, WOOD);
         let night = (cx.time * 0.05).sin() > 0.0;
         let (top, bot) = if night {
-            (Color32::from_rgb(38, 44, 96), Color32::from_rgb(86, 74, 140))
+            (Color32::from_rgb(46, 52, 108), Color32::from_rgb(120, 96, 160))
         } else {
-            (Color32::from_rgb(150, 214, 255), Color32::from_rgb(224, 244, 255))
+            (Color32::from_rgb(150, 198, 242), Color32::from_rgb(255, 226, 234))
         };
         cx.vgradient(wx, wy, wx + ww, wy + wh, top, bot);
         if night {
-            cx.circle(wx + ww * 0.72, wy + wh * 0.3, 22.0, Color32::from_rgb(255, 248, 214));
-            cx.circle(wx + ww * 0.66, wy + wh * 0.26, 19.0, top);
+            cx.circle(wx + 118.0, wy + 52.0, 22.0, Color32::from_rgb(255, 248, 214));
+            cx.circle(wx + 110.0, wy + 46.0, 19.0, top);
             for i in 0..12 {
                 let sx = wx + ((i as f32 * 53.7) % ww);
                 let sy = wy + ((i as f32 * 37.3) % wh);
                 let tw = 0.4 + 0.6 * (cx.time * 2.0 + i as f32).sin().abs();
-                cx.circle(sx, sy, 1.8, rgba(255, 255, 235, (200.0 * tw) / 255.0));
+                cx.circle(sx, sy, 1.8, rgba(255, 255, 235, 0.78 * tw));
             }
         } else {
-            cx.circle(wx + ww * 0.28, wy + wh * 0.28, 24.0, Color32::from_rgb(255, 236, 150));
-            for (ox, oy, r) in [(0.55, 0.55, 20.0), (0.72, 0.5, 26.0), (0.86, 0.58, 18.0)] {
-                cx.circle(wx + ww * ox, wy + wh * oy, r, rgba(255, 255, 255, 225.0 / 255.0));
+            cx.glow(wx + 118.0, wy + 52.0, 46.0, Color32::from_rgb(255, 240, 190), 0.8);
+            cx.circle(wx + 118.0, wy + 52.0, 20.0, Color32::from_rgb(255, 246, 210));
+            cx.ellipse(wx + 58.0, wy + 100.0, 30.0, 10.0, rgba(255, 255, 255, 0.85));
+            cx.ellipse(wx + 84.0, wy + 94.0, 22.0, 9.0, rgba(255, 255, 255, 0.85));
+        }
+        let branch = Color32::from_rgb(110, 78, 60);
+        cx.polyline(&[(wx, wy + 18.0), (wx + 46.0, wy + 30.0), (wx + 92.0, wy + 26.0), (wx + 128.0, wy + 44.0)], 5.0, branch);
+        cx.polyline(&[(wx + 46.0, wy + 30.0), (wx + 60.0, wy + 58.0)], 3.5, branch);
+        for (bx, by) in [(wx + 30.0, wy + 16.0), (wx + 70.0, wy + 22.0), (wx + 104.0, wy + 30.0), (wx + 126.0, wy + 46.0), (wx + 60.0, wy + 60.0), (wx + 88.0, wy + 52.0)] {
+            sakura_blossom(cx, bx, by, 7.0, 1.0);
+        }
+        // กลีบซากุระปลิวผ่านช่องหน้าต่าง (clip ไม่ให้ล้นกรอบ)
+        let clip = cx.clip_rect_v(wx, wy, wx + ww, wy + wh);
+        let cp = cx.p.with_clip_rect(clip);
+        let c2 = cx.with_painter(&cp);
+        for i in 0..6 {
+            let t = cx.time * 0.12 + i as f32 * 0.19;
+            let px = wx + ((t * 137.0 + i as f32 * 53.0) % (ww + 20.0)) - 10.0;
+            let py = wy + ((t * 90.0 + i as f32 * 71.0) % (wh + 20.0)) - 10.0;
+            sakura_petal(&c2, px, py, 4.5, t * 3.0, 0.8);
+        }
+        for fx in [wx + ww / 3.0, wx + 2.0 * ww / 3.0] {
+            cx.rect(fx - 2.0, wy, fx + 2.0, wy + wh, 0.0, WOOD);
+        }
+        for fy in [wy + wh / 3.0, wy + 2.0 * wh / 3.0] {
+            cx.rect(wx, fy - 2.0, wx + ww, fy + 2.0, 0.0, WOOD);
+        }
+        // บานโชจิกระดาษเลื่อนกองไว้ด้านขวา
+        let px0 = wx + ww - 62.0;
+        cx.rect(px0, wy, wx + ww, wy + wh, 0.0, rgba(255, 252, 244, 0.96));
+        cx.rect_line(px0, wy, wx + ww, wy + wh, 0.0, 3.0, WOOD);
+        for fy in [wy + wh * 0.25, wy + wh * 0.5, wy + wh * 0.75] {
+            cx.rect(px0, fy - 1.5, wx + ww, fy + 1.5, 0.0, with_a(WOOD, 0.8));
+        }
+        cx.rect(px0 + 28.0, wy, px0 + 31.0, wy + wh, 0.0, with_a(WOOD, 0.8));
+
+        // ประกายแสงอนิเมะข้างหน้าต่าง
+        for i in 0..2 {
+            let tw = (cx.time * 1.6 + i as f32 * 2.1).sin().max(0.0);
+            if tw > 0.1 {
+                sparkle(cx, 338.0, wy + 44.0 + i as f32 * 92.0, 7.0 * tw, 0.55 * tw);
             }
         }
-        cx.line((wx + ww * 0.5, wy), (wx + ww * 0.5, wy + wh), 7.0, Color32::from_rgb(255, 250, 240));
-        cx.line((wx, wy + wh * 0.5), (wx + ww, wy + wh * 0.5), 7.0, Color32::from_rgb(255, 250, 240));
-        // framed paw print (right wall, below the guide card)
-        let (fx, fy) = (880.0, h * 0.33);
-        cx.rect(fx, fy, fx + 120.0, fy + 104.0, 10.0, Color32::from_rgb(255, 252, 244));
-        cx.rect_line(fx, fy, fx + 120.0, fy + 104.0, 10.0, 6.0, Color32::from_rgb(214, 164, 120));
-        draw_paw(cx, fx + 60.0, fy + 58.0, 22.0, Color32::from_rgb(240, 170, 150));
-        // wall shelf with a plant and books
+
+        // คัเคจิคุ (ม้วนภาพแขวน) ลายอุ้งเท้าหมึก + ตราประทับแดง
+        let (sx, sy, sw, sh) = (880.0, h * 0.33, 120.0, 104.0);
+        cx.polyline(&[(sx + sw * 0.5, sy - 26.0), (sx + sw * 0.5, sy - 6.0)], 2.0, WOOD_D);
+        cx.circle(sx + sw * 0.5, sy - 26.0, 3.0, WOOD_D);
+        cx.rect(sx + 6.0, sy, sx + sw - 6.0, sy + sh, 2.0, Color32::from_rgb(255, 250, 238));
+        cx.rect_line(sx + 6.0, sy, sx + sw - 6.0, sy + sh, 2.0, 1.5, rgba(150, 110, 72, 0.5));
+        cx.rect(sx - 4.0, sy - 8.0, sx + sw + 4.0, sy + 2.0, 4.0, WOOD_D);
+        cx.rect(sx - 8.0, sy + sh - 2.0, sx + sw + 8.0, sy + sh + 10.0, 5.0, WOOD_D);
+        cx.circle(sx - 8.0, sy + sh + 4.0, 5.0, Color32::from_rgb(90, 60, 40));
+        cx.circle(sx + sw + 8.0, sy + sh + 4.0, 5.0, Color32::from_rgb(90, 60, 40));
+        draw_paw(cx, sx + sw * 0.5, sy + sh * 0.42, 24.0, Color32::from_rgb(70, 52, 48));
+        cx.rect(sx + sw - 30.0, sy + sh - 26.0, sx + sw - 14.0, sy + sh - 10.0, 2.0, Color32::from_rgb(214, 70, 60));
+
+        // โคมกระดาษแขวนแกว่งเบา ๆ แทนนาฬิกา (สว่างขึ้นตอนกลางคืน)
+        let lx = 720.0 + (cx.time * 0.8).sin() * 4.0;
+        let ly = h * 0.40;
+        cx.line((720.0, -40.0), (lx, ly - 40.0), 2.5, Color32::from_rgb(90, 60, 40));
+        cx.glow_add(lx, ly, 74.0, Color32::from_rgb(255, 190, 110), if night { 0.75 } else { 0.45 });
+        cx.rect(lx - 16.0, ly - 44.0, lx + 16.0, ly - 36.0, 3.0, Color32::from_rgb(90, 60, 40));
+        cx.ellipse(lx, ly, 30.0, 38.0, Color32::from_rgb(255, 214, 150));
+        cx.ellipse(lx - 8.0, ly - 6.0, 12.0, 26.0, rgba(255, 244, 214, 0.75));
+        for i in 0..4 {
+            let ry = ly - 24.0 + i as f32 * 16.0;
+            let dy = (ry - ly) / 38.0;
+            let hw = 30.0 * (1.0 - dy * dy).max(0.0).sqrt();
+            cx.line((lx - hw, ry), (lx + hw, ry), 1.6, rgba(190, 120, 60, 0.6));
+        }
+        cx.rect(lx - 14.0, ly + 36.0, lx + 14.0, ly + 44.0, 3.0, Color32::from_rgb(90, 60, 40));
+        draw_paw(cx, lx, ly + 4.0, 10.0, Color32::from_rgb(190, 90, 60));
+        cx.line((lx, ly + 44.0), (lx, ly + 58.0), 2.0, Color32::from_rgb(214, 70, 60));
+
+        // ชั้นไม้เตี้ย + มาเนกิเนโกะ + หนังสือ + บอนไซ
         let (sx, sy) = (380.0, h * 0.40);
-        cx.rect(sx, sy, sx + 240.0, sy + 12.0, 4.0, Color32::from_rgb(214, 164, 120));
-        cx.rect(sx + 18.0, sy - 34.0, sx + 52.0, sy, 5.0, Color32::from_rgb(226, 140, 120));
-        cx.circle(sx + 35.0, sy - 44.0, 16.0, Color32::from_rgb(140, 200, 140));
-        cx.circle(sx + 24.0, sy - 52.0, 11.0, Color32::from_rgb(160, 214, 150));
-        cx.circle(sx + 46.0, sy - 52.0, 11.0, Color32::from_rgb(120, 186, 130));
+        cx.rect(sx, sy, sx + 240.0, sy + 12.0, 4.0, WOOD);
+        cx.rect(sx, sy + 12.0, sx + 240.0, sy + 16.0, 2.0, WOOD_D);
+        cx.poly(&[(sx + 18.0, sy + 16.0), (sx + 32.0, sy + 16.0), (sx + 25.0, sy + 36.0)], WOOD_D);
+        cx.poly(&[(sx + 208.0, sy + 16.0), (sx + 222.0, sy + 16.0), (sx + 215.0, sy + 36.0)], WOOD_D);
+        let mx = sx + 45.0;
+        let my = sy;
+        let mwhite = Color32::from_rgb(255, 252, 246);
+        cx.ellipse(mx, my - 16.0, 17.5, 18.5, LINE);
+        cx.ellipse(mx, my - 16.0, 16.0, 17.0, mwhite);
+        cx.poly(&[(mx - 13.0, my - 42.0), (mx - 3.0, my - 48.0), (mx - 14.0, my - 55.0)], LINE);
+        cx.poly(&[(mx + 13.0, my - 42.0), (mx + 3.0, my - 48.0), (mx + 14.0, my - 55.0)], LINE);
+        cx.poly(&[(mx - 11.0, my - 43.0), (mx - 4.0, my - 47.0), (mx - 12.0, my - 52.0)], mwhite);
+        cx.poly(&[(mx + 11.0, my - 43.0), (mx + 4.0, my - 47.0), (mx + 12.0, my - 52.0)], mwhite);
+        cx.circle(mx, my - 38.0, 14.5, LINE);
+        cx.circle(mx, my - 38.0, 13.0, mwhite);
+        cx.ellipse_rot(mx + 16.0, my - 42.0, 5.5, 11.0, 0.25, LINE);
+        cx.ellipse_rot(mx + 16.0, my - 42.0, 4.5, 10.0, 0.25, mwhite);
+        cx.circle(mx + 18.0, my - 50.0, 2.5, PINK);
+        for s in [-1.0, 1.0] {
+            cx.polyline(&[(mx + s * 8.0, my - 37.0), (mx + s * 4.0, my - 40.0), (mx + s * 1.0, my - 37.0)], 1.8, LINE);
+        }
+        cx.circle(mx, my - 33.0, 1.6, PINK);
+        cx.rect(mx - 10.0, my - 27.0, mx + 10.0, my - 23.0, 2.0, Color32::from_rgb(214, 70, 60));
+        cx.circle(mx, my - 20.0, 3.0, GOLD);
+        cx.ellipse(mx, my - 7.0, 8.0, 5.0, GOLD);
+        cx.ellipse(mx, my - 7.0, 5.0, 3.0, Color32::from_rgb(226, 168, 62));
         for (i, c) in [Color32::from_rgb(150, 190, 230), Color32::from_rgb(250, 200, 140), Color32::from_rgb(230, 150, 170)].iter().enumerate() {
             cx.rect(sx + 80.0 + i as f32 * 22.0, sy - 40.0, sx + 96.0 + i as f32 * 22.0, sy, 3.0, *c);
         }
-        cx.rect(sx + 160.0, sy - 26.0, sx + 210.0, sy, 6.0, Color32::from_rgb(255, 250, 240));
-        cx.circle(sx + 185.0, sy - 26.0, 12.0, Color32::from_rgb(255, 178, 196));
-        // round wall clock
-        let (kx, ky) = (720.0, h * 0.40);
-        cx.circle(kx, ky, 40.0, Color32::from_rgb(255, 252, 244));
-        cx.ring(kx, ky, 40.0, 5.0, Color32::from_rgb(214, 164, 120));
-        let ha = cx.time * 0.05;
-        cx.line((kx, ky), (kx + ha.cos() * 20.0, ky + ha.sin() * 20.0), 4.0, INK);
-        cx.line((kx, ky), (kx + (ha * 12.0).cos() * 28.0, ky + (ha * 12.0).sin() * 28.0), 3.0, INK);
-        cx.circle(kx, ky, 4.0, Color32::from_rgb(226, 140, 120));
-        // fairy-light garland across the wall
+        let bx = sx + 190.0;
+        cx.rect(bx - 14.0, sy - 12.0, bx + 14.0, sy, 3.0, Color32::from_rgb(190, 110, 80));
+        cx.rect(bx - 16.0, sy - 14.0, bx + 16.0, sy - 9.0, 2.0, Color32::from_rgb(160, 88, 62));
+        cx.polyline(&[(bx, sy - 13.0), (bx - 2.0, sy - 28.0), (bx + 7.0, sy - 36.0)], 3.5, branch);
+        cx.circle(bx - 9.0, sy - 34.0, 10.0, Color32::from_rgb(110, 160, 110));
+        cx.circle(bx + 8.0, sy - 42.0, 11.0, Color32::from_rgb(96, 148, 100));
+        cx.circle(bx + 1.0, sy - 28.0, 8.0, Color32::from_rgb(120, 172, 118));
+
+        // กิ่งซากุระพาดห้อง + แทงะคุกระดาษแขวน (แทนไฟราว)
         let gy = h * 0.56;
         let mut pts = Vec::new();
         for i in 0..=24 {
             let t = i as f32 / 24.0;
-            pts.push((40.0 + t * (VW - 80.0), gy + (t * 3.0 * PI).sin().abs() * 26.0));
+            pts.push((20.0 + t * (VW - 40.0), gy + (t * PI).sin() * 16.0));
         }
-        cx.polyline(&pts, 2.5, rgba(180, 140, 120, 0.5));
+        cx.polyline(&pts, 4.0, branch);
+        let tanzaku = [Color32::from_rgb(255, 170, 190), Color32::from_rgb(170, 210, 255), Color32::from_rgb(255, 224, 150)];
         for i in 0..12 {
             let t = (i as f32 + 0.5) / 12.0;
-            let x = 40.0 + t * (VW - 80.0);
-            let sag = (t * 3.0 * PI).sin().abs() * 26.0;
-            let c = [Color32::from_rgb(255, 170, 190), Color32::from_rgb(255, 220, 150), Color32::from_rgb(170, 220, 255)][i % 3];
-            let tw = 0.6 + 0.4 * (cx.time * 2.0 + i as f32).sin().abs();
-            cx.circle(x, gy + sag + 8.0, 5.0, with_a(c, tw));
+            let x = 20.0 + t * (VW - 40.0);
+            let y = gy + (t * PI).sin() * 16.0;
+            sakura_blossom(cx, x, y - 4.0, 8.0, 0.95);
+            if i % 4 == 0 {
+                cx.ellipse_rot(x + 12.0, y + 2.0, 6.0, 3.0, 0.5, Color32::from_rgb(140, 180, 120));
+            }
+            if i % 3 == 1 {
+                let sway = (cx.time * 1.3 + i as f32).sin() * 3.0;
+                cx.rect(x - 6.0 + sway, y + 6.0, x + 6.0 + sway, y + 30.0, 2.0, with_a(tanzaku[((i / 3) % 3) as usize], 0.9));
+            }
         }
-        // rug
-        cx.ellipse(PET_X, g + 16.0, 300.0, 46.0, Color32::from_rgb(244, 178, 168));
-        cx.ellipse(PET_X, g + 16.0, 250.0, 36.0, Color32::from_rgb(250, 200, 188));
-        cx.ellipse(PET_X, g + 16.0, 190.0, 26.0, Color32::from_rgb(252, 216, 204));
+
+        // ซาบุตง (เบาะรองนั่ง) ใต้แมว
+        let k = look_for(self.level, self.seed).scale;
+        let zy = g + 16.0;
+        cx.ellipse(PET_X, zy + 8.0, 118.0 * k, 16.0 * k, rgba(60, 50, 40, 0.25));
+        cx.rect(PET_X - 110.0 * k, zy - 10.0 * k, PET_X + 110.0 * k, zy + 14.0 * k, 12.0 * k, Color32::from_rgb(108, 120, 184));
+        cx.rect(PET_X - 96.0 * k, zy - 5.0 * k, PET_X + 96.0 * k, zy + 9.0 * k, 8.0 * k, Color32::from_rgb(132, 144, 206));
+        cx.rect_line(PET_X - 110.0 * k, zy - 10.0 * k, PET_X + 110.0 * k, zy + 14.0 * k, 12.0 * k, 2.0, rgba(255, 255, 255, 0.35));
+        for s in [-1.0, 1.0] {
+            cx.circle(PET_X + s * 104.0 * k, zy + 2.0 * k, 3.0 * k, rgba(255, 255, 255, 0.5));
+        }
+
+        // กลีบซากุระร่วงทั้งฉาก (ด้านหลัง UI)
+        for i in 0..10 {
+            let t = cx.time * 0.1 + i as f32 * 0.37;
+            let px = ((t * 120.0 + i as f32 * 173.0) % (VW + 60.0)) - 30.0;
+            let py = ((t * 70.0 + i as f32 * 97.0) % (h + 40.0)) - 20.0;
+            let sway = (cx.time * 1.1 + i as f32 * 2.0).sin() * 14.0;
+            sakura_petal(cx, px + sway, py, 5.0 + (i % 3) as f32, t * 2.4 + i as f32, 0.55);
+        }
     }
 
     fn draw_props(&self, cx: &Cx, g: f32) {
-        // cat bed
+        // ฟูกนอนแมวโทนซากุระ
         let bx = BED_X;
         cx.ellipse(bx, g + 6.0, 104.0, 22.0, rgba(0, 0, 0, 40.0 / 255.0));
-        cx.rect(bx - 96.0, g - 40.0, bx + 96.0, g + 8.0, 22.0, Color32::from_rgb(196, 140, 176));
-        cx.ellipse(bx, g - 34.0, 92.0, 24.0, Color32::from_rgb(226, 176, 206));
-        cx.ellipse(bx, g - 30.0, 74.0, 17.0, Color32::from_rgb(248, 214, 232));
-        // food bowl: fill follows fullness
+        cx.rect(bx - 96.0, g - 40.0, bx + 96.0, g + 8.0, 22.0, Color32::from_rgb(214, 150, 170));
+        cx.ellipse(bx, g - 34.0, 92.0, 24.0, Color32::from_rgb(255, 226, 236));
+        cx.ellipse(bx, g - 30.0, 74.0, 17.0, Color32::from_rgb(255, 244, 246));
+        cx.ellipse(bx - 44.0, g - 32.0, 22.0, 11.0, Color32::from_rgb(255, 250, 244));
+        // ชามอาหารเซรามิกครีมขอบแดง: ปริมาณอาหารตามความอิ่ม
         let f = self.fullness / 100.0;
         cx.ellipse(BOWL_X, g + 4.0, 56.0, 12.0, rgba(0, 0, 0, 40.0 / 255.0));
         cx.poly(
-            &[(BOWL_X - 52.0, g - 30.0), (BOWL_X + 52.0, g - 30.0), (BOWL_X + 38.0, g), (BOWL_X - 38.0, g)],
-            Color32::from_rgb(120, 190, 220),
+            &[(BOWL_X - 54.0, g - 31.0), (BOWL_X + 54.0, g - 31.0), (BOWL_X + 39.0, g + 1.0), (BOWL_X - 39.0, g + 1.0)],
+            LINE,
         );
-        cx.ellipse(BOWL_X, g - 30.0, 52.0, 13.0, Color32::from_rgb(160, 214, 238));
+        cx.poly(
+            &[(BOWL_X - 52.0, g - 30.0), (BOWL_X + 52.0, g - 30.0), (BOWL_X + 38.0, g), (BOWL_X - 38.0, g)],
+            Color32::from_rgb(255, 246, 234),
+        );
+        cx.ellipse(BOWL_X, g - 30.0, 52.0, 13.0, Color32::from_rgb(226, 120, 110));
+        cx.ellipse(BOWL_X, g - 30.0, 44.0, 10.0, Color32::from_rgb(120, 80, 60));
         if f > 0.02 {
             cx.ellipse(BOWL_X, g - 30.0, 44.0 * f.max(0.25), 10.0 * f.max(0.25), Color32::from_rgb(255, 248, 232));
             for i in 0..5 {
@@ -772,23 +905,23 @@ impl PetStage {
                 cx.circle(BOWL_X - 26.0 + k * 13.0, g - 32.0 + (k * 1.7).sin() * 3.0, 5.0, Color32::from_rgb(214, 164, 110));
             }
         }
-        draw_paw(cx, BOWL_X, g - 12.0, 11.0, rgba(255, 255, 255, 190.0 / 255.0));
-        // toy basket
+        draw_paw(cx, BOWL_X, g - 12.0, 11.0, rgba(226, 120, 110, 190.0 / 255.0));
+        // ตะกร้าของเล่นไม้สาน
         let tx = 960.0;
-        cx.rect(tx - 46.0, g - 44.0, tx + 46.0, g, 10.0, Color32::from_rgb(214, 170, 116));
+        cx.rect(tx - 46.0, g - 44.0, tx + 46.0, g, 10.0, Color32::from_rgb(200, 160, 110));
         for i in 0..4 {
-            cx.line((tx - 46.0, g - 36.0 + i as f32 * 10.0), (tx + 46.0, g - 36.0 + i as f32 * 10.0), 2.5, rgba(170, 126, 80, 150.0 / 255.0));
+            cx.line((tx - 46.0, g - 36.0 + i as f32 * 10.0), (tx + 46.0, g - 36.0 + i as f32 * 10.0), 2.5, rgba(150, 110, 70, 150.0 / 255.0));
         }
         cx.circle(tx - 16.0, g - 50.0, 15.0, Color32::from_rgb(255, 138, 168));
         cx.circle(tx + 14.0, g - 54.0, 13.0, Color32::from_rgb(150, 214, 255));
         cx.ring(tx + 14.0, g - 54.0, 13.0, 3.0, Color32::from_rgb(255, 255, 255));
-        // scratching post
+        // เสากระทบไม้ธรรมชาติพันเชือก
         let sx = 90.0;
-        cx.rect(sx - 26.0, g - 6.0, sx + 26.0, g + 4.0, 6.0, Color32::from_rgb(190, 146, 104));
-        cx.rect(sx - 11.0, g - 150.0, sx + 11.0, g - 4.0, 5.0, Color32::from_rgb(226, 196, 150));
+        cx.rect(sx - 26.0, g - 6.0, sx + 26.0, g + 4.0, 6.0, WOOD_D);
+        cx.rect(sx - 11.0, g - 150.0, sx + 11.0, g - 4.0, 5.0, WOOD);
         for i in 0..12 {
             let y = g - 146.0 + i as f32 * 12.0;
-            cx.line((sx - 11.0, y), (sx + 11.0, y + 4.0), 2.0, rgba(180, 146, 100, 160.0 / 255.0));
+            cx.line((sx - 11.0, y), (sx + 11.0, y + 4.0), 2.0, rgba(222, 196, 150, 200.0 / 255.0));
         }
         cx.circle(sx, g - 158.0, 17.0, Color32::from_rgb(255, 178, 196));
     }
@@ -970,11 +1103,11 @@ impl PetStage {
         let w = 430.0;
         let row = 40.0;
         let h = row * 3.0 + 62.0;
-        cx.rect(x0, y0, x0 + w, y0 + h, 16.0, rgba(38, 24, 40, 0.82));
-        cx.rect_line(x0, y0, x0 + w, y0 + h, 16.0, 2.5, rgba(255, 214, 232, 0.55));
-        cx.text(x0 + 16.0, y0 + 26.0, Align2::LEFT_CENTER, &self.name, 23.0, Color32::from_rgb(255, 244, 228), true);
+        cx.rect(x0, y0, x0 + w, y0 + h, 16.0, rgba(255, 250, 240, 0.92));
+        cx.rect_line(x0, y0, x0 + w, y0 + h, 16.0, 2.5, rgba(122, 86, 60, 0.8));
+        cx.text(x0 + 16.0, y0 + 26.0, Align2::LEFT_CENTER, &self.name, 23.0, Color32::from_rgb(70, 48, 40), true);
         let lv = format!("Lv.{} {}", self.level, level_title(self.level));
-        cx.text(x0 + w - 16.0, y0 + 26.0, Align2::RIGHT_CENTER, &lv, 18.0, GOLD, true);
+        cx.text(x0 + w - 16.0, y0 + 26.0, Align2::RIGHT_CENTER, &lv, 18.0, Color32::from_rgb(190, 120, 40), true);
         let bars = [
             ("ความเหงา", self.loneliness, Color32::from_rgb(150, 190, 255), Color32::from_rgb(90, 130, 220), true),
             ("ความอิ่ม", self.fullness, Color32::from_rgb(255, 206, 130), Color32::from_rgb(232, 150, 70), false),
@@ -982,10 +1115,10 @@ impl PetStage {
         ];
         for (i, (label, v, c1, c2, invert)) in bars.iter().enumerate() {
             let y = y0 + 52.0 + i as f32 * row;
-            cx.text(x0 + 16.0, y + 13.0, Align2::LEFT_CENTER, label, 17.0, Color32::from_rgb(255, 240, 244), false);
+            cx.text(x0 + 16.0, y + 13.0, Align2::LEFT_CENTER, label, 17.0, Color32::from_rgb(90, 64, 52), false);
             let bx0 = x0 + 116.0;
             let bx1 = x0 + w - 62.0;
-            cx.rect(bx0, y + 4.0, bx1, y + 24.0, 10.0, rgba(255, 255, 255, 0.14));
+            cx.rect(bx0, y + 4.0, bx1, y + 24.0, 10.0, rgba(120, 90, 70, 0.15));
             let u = (v / 100.0).clamp(0.0, 1.0);
             // เหงา: แถบยาว = แย่ จึงเตือนเป็นสีแดงเมื่อสูง
             let warn = if *invert { u > 0.7 } else { u < 0.25 };
@@ -998,7 +1131,7 @@ impl PetStage {
                 let pulse = 0.45 + 0.55 * (cx.time * 4.0).sin().abs();
                 cx.rect_line(bx0, y + 4.0, bx1, y + 24.0, 10.0, 2.0, with_a(Color32::from_rgb(255, 140, 140), pulse));
             }
-            cx.text(x0 + w - 16.0, y + 14.0, Align2::RIGHT_CENTER, &format!("{}", v.round() as u32), 17.0, Color32::WHITE, true);
+            cx.text(x0 + w - 16.0, y + 14.0, Align2::RIGHT_CENTER, &format!("{}", v.round() as u32), 17.0, Color32::from_rgb(70, 48, 40), true);
         }
     }
 
@@ -1019,6 +1152,7 @@ impl PetStage {
             _ => Color32::from_rgb(255, 240, 246),
         };
         cx.rect(x - w * 0.5, y - h + bob, x + w * 0.5, y + bob, 18.0, with_a(col, 0.95));
+        cx.rect_line(x - w * 0.5, y - h + bob, x + w * 0.5, y + bob, 18.0, 2.0, with_a(LINE, 0.45));
         cx.poly(&[(x - 26.0, y - 4.0 + bob), (x - 6.0, y - 4.0 + bob), (x - 22.0, y + 18.0 + bob)], with_a(col, 0.95));
         cx.text(x, y - h * 0.5 + bob, Align2::CENTER_CENTER, text, 21.0, INK, true);
     }
@@ -1034,15 +1168,15 @@ impl PetStage {
         let h = 100.0;
         let x0 = (VW - w) * 0.5;
         let y0 = 200.0;
-        cx.rect(x0, y0, x0 + w, y0 + h, 20.0, with_a(rgba(44, 26, 44, 0.9), al));
+        cx.rect(x0, y0, x0 + w, y0 + h, 20.0, with_a(rgba(255, 250, 240, 0.94), al));
         cx.rect_line(x0, y0, x0 + w, y0 + h, 20.0, 3.0, with_a(if a.trick.is_star() { GOLD } else { PINK }, al * 0.9));
-        cx.text(x0 + w * 0.5, y0 + 20.0, Align2::CENTER_CENTER, title, 19.0, with_a(Color32::from_rgb(255, 226, 240), al), true);
-        cx.text(x0 + w * 0.5, y0 + 50.0, Align2::CENTER_CENTER, a.trick.label(), 30.0, with_a(Color32::from_rgb(255, 248, 232), al), true);
+        cx.text(x0 + w * 0.5, y0 + 20.0, Align2::CENTER_CENTER, title, 19.0, with_a(Color32::from_rgb(150, 90, 70), al), true);
+        cx.text(x0 + w * 0.5, y0 + 50.0, Align2::CENTER_CENTER, a.trick.label(), 30.0, with_a(Color32::from_rgb(70, 48, 40), al), true);
         let who = if a.combo > 1 { format!("{}  ×{}", a.user, a.combo) } else { a.user.clone() };
-        cx.text(x0 + w * 0.5, y0 + 82.0, Align2::CENTER_CENTER, &who, 21.0, with_a(GOLD, al), true);
+        cx.text(x0 + w * 0.5, y0 + 82.0, Align2::CENTER_CENTER, &who, 21.0, with_a(Color32::from_rgb(190, 120, 40), al), true);
         if !a.gift.trim().is_empty() {
             let g = format!("{} · {} เพชร", a.gift, a.diamonds);
-            cx.text(x0 + w - 16.0, y0 + 20.0, Align2::RIGHT_CENTER, &g, 15.0, with_a(Color32::from_rgb(226, 214, 232), al * 0.9), false);
+            cx.text(x0 + w - 16.0, y0 + 20.0, Align2::RIGHT_CENTER, &g, 15.0, with_a(Color32::from_rgb(140, 110, 90), al * 0.9), false);
         }
     }
 
@@ -1055,9 +1189,9 @@ impl PetStage {
         let h = rh * rows as f32 + 46.0;
         let x0 = VW - w - 20.0;
         let y0 = 14.0;
-        cx.rect(x0, y0, x0 + w, y0 + h, 14.0, rgba(38, 24, 40, 0.74));
-        cx.rect_line(x0, y0, x0 + w, y0 + h, 14.0, 2.0, rgba(255, 214, 232, 0.4));
-        cx.text(x0 + w * 0.5, y0 + 22.0, Align2::CENTER_CENTER, label, 18.0, Color32::from_rgb(255, 232, 244), true);
+        cx.rect(x0, y0, x0 + w, y0 + h, 14.0, rgba(255, 250, 240, 0.88));
+        cx.rect_line(x0, y0, x0 + w, y0 + h, 14.0, 2.0, rgba(122, 86, 60, 0.6));
+        cx.text(x0 + w * 0.5, y0 + 22.0, Align2::CENTER_CENTER, label, 18.0, Color32::from_rgb(120, 70, 50), true);
         for (i, t) in TRICKS.iter().enumerate() {
             let c = i / rows;
             let r = i % rows;
@@ -1065,12 +1199,12 @@ impl PetStage {
             let y = y0 + 44.0 + r as f32 * rh;
             let active = self.active.as_ref().map(|a| a.trick == *t).unwrap_or(false);
             if active {
-                cx.rect(x - 6.0, y - 11.0, x + cw - 12.0, y + 13.0, 8.0, rgba(255, 170, 200, 0.28));
+                cx.rect(x - 6.0, y - 11.0, x + cw - 12.0, y + 13.0, 8.0, rgba(255, 170, 200, 0.35));
             }
             cx.circle(x + 7.0, y, 6.0, if t.is_food() { Color32::from_rgb(255, 206, 130) } else { PINK });
             let txt = format!("{} · {}", t.label(), t.gift());
-            cx.text(x + 20.0, y, Align2::LEFT_CENTER, &ellipsize(&txt, 24), 15.0, Color32::from_rgb(255, 244, 248), active);
-            cx.text(x + cw - 20.0, y, Align2::RIGHT_CENTER, &format!("{}", t.diamonds()), 15.0, GOLD, true);
+            cx.text(x + 20.0, y, Align2::LEFT_CENTER, &ellipsize(&txt, 24), 15.0, Color32::from_rgb(80, 56, 46), active);
+            cx.text(x + cw - 20.0, y, Align2::RIGHT_CENTER, &format!("{}", t.diamonds()), 15.0, Color32::from_rgb(190, 120, 40), true);
         }
     }
 }
@@ -1097,6 +1231,25 @@ fn draw_paw(cx: &Cx, x: f32, y: f32, r: f32, c: Color32) {
         let a = -PI * 0.78 + i as f32 * (PI * 0.52 / 3.0);
         cx.ellipse(x + a.cos() * r * 0.72, y + a.sin() * r * 0.62, r * 0.26, r * 0.32, c);
     }
+}
+
+fn sakura_blossom(cx: &Cx, x: f32, y: f32, r: f32, alpha: f32) {
+    let pink = with_a(Color32::from_rgb(255, 183, 205), alpha);
+    for i in 0..5 {
+        let a = -PI / 2.0 + i as f32 * TAU / 5.0;
+        cx.ellipse_rot(x + a.cos() * r * 0.72, y + a.sin() * r * 0.72, r * 0.5, r * 0.68, a + PI / 2.0, pink);
+    }
+    cx.circle(x, y, r * 0.32, with_a(Color32::from_rgb(255, 236, 170), alpha));
+}
+
+fn sakura_petal(cx: &Cx, x: f32, y: f32, r: f32, ang: f32, alpha: f32) {
+    cx.ellipse_rot(x, y, r * 0.62, r, ang, with_a(Color32::from_rgb(255, 190, 210), alpha));
+}
+
+fn sparkle(cx: &Cx, x: f32, y: f32, r: f32, alpha: f32) {
+    let c = with_a(Color32::from_rgb(255, 250, 230), alpha);
+    cx.poly(&[(x, y - r), (x + r * 0.22, y), (x, y + r), (x - r * 0.22, y)], c);
+    cx.poly(&[(x - r, y), (x, y - r * 0.22), (x + r, y), (x, y + r * 0.22)], c);
 }
 
 fn draw_heart(cx: &Cx, x: f32, y: f32, r: f32, ang: f32, c: Color32) {
@@ -1126,9 +1279,10 @@ fn draw_pet(cx: &Cx, x: f32, g: f32, look: &Look, pose: &Pose, alpha: f32) {
     }
     let k = look.scale;
     let fur = with_a(look.fur, alpha);
-    let dark = with_a(look.fur_dark, alpha);
     let light = with_a(look.fur_light, alpha);
     let belly = with_a(look.belly, alpha);
+    let line = with_a(LINE, alpha);
+    let cel = with_a(shade(look.fur, 0.86), alpha);
     let bob = (cx.time * 1.9 + look.seed * 4.0).sin() * 2.2 * k;
     let body_y = g - 52.0 * k - pose.hop - bob * 0.5;
     let head_y = body_y - 62.0 * k;
@@ -1146,20 +1300,23 @@ fn draw_pet(cx: &Cx, x: f32, g: f32, look: &Look, pose: &Pose, alpha: f32) {
         let dx = -(6.0 + 46.0 * u) * k + wag * u * u;
         let dy = -6.0 * k - (1.0 - curl) * 44.0 * k * u + curl * 16.0 * k * u + (u * PI).sin() * 12.0 * k;
         let r = lerp(13.0, 5.0, u) * k;
-        cx.circle(t0.0 + dx, t0.1 + dy, r + 1.6 * k, dark);
+        cx.circle(t0.0 + dx, t0.1 + dy, r + 1.6 * k, line);
         cx.circle(t0.0 + dx, t0.1 + dy, r, fur);
         if i + 2 >= n {
             cx.circle(t0.0 + dx - 1.4 * k, t0.1 + dy - 1.4 * k, r * 0.5, light);
         }
     }
 
-    // back legs / haunch
-    cx.ellipse(x - 34.0 * k, body_y + 26.0 * k, 30.0 * k, 24.0 * k, dark);
-    cx.ellipse(x + 34.0 * k, body_y + 26.0 * k, 30.0 * k, 24.0 * k, dark);
+    // back legs / haunch (cel-shaded)
+    for s in [-1.0, 1.0] {
+        cx.ellipse(x + s * 34.0 * k, body_y + 26.0 * k, 30.0 * k, 24.0 * k, line);
+        cx.ellipse(x + s * 34.0 * k - 1.5 * k, body_y + 24.5 * k, 27.0 * k, 21.0 * k, fur);
+    }
 
-    // body: round chibi loaf
-    cx.ellipse(x, body_y, 62.0 * k, 54.0 * k, dark);
-    cx.ellipse(x, body_y - 1.5 * k, 59.0 * k, 51.0 * k, fur);
+    // body: round chibi loaf, hard-edge cel shadow + thin lineart
+    cx.ellipse(x, body_y, 62.0 * k, 54.0 * k, line);
+    cx.ellipse(x + 2.0 * k, body_y + 2.0 * k, 59.0 * k, 51.0 * k, cel);
+    cx.ellipse(x - 1.5 * k, body_y - 2.5 * k, 56.5 * k, 48.5 * k, fur);
     cx.ellipse(x, body_y + 16.0 * k, 40.0 * k, 32.0 * k, belly);
     if look.stripes {
         for i in 0..3 {
@@ -1173,16 +1330,24 @@ fn draw_pet(cx: &Cx, x: f32, g: f32, look: &Look, pose: &Pose, alpha: f32) {
     for s in [-1.0, 1.0] {
         let px = x + s * 24.0 * k;
         let py = body_y + 44.0 * k;
-        cx.ellipse(px, py, 19.0 * k, 13.0 * k, light);
+        cx.ellipse(px, py, 20.0 * k, 14.0 * k, line);
+        cx.ellipse(px, py - 0.5 * k, 18.5 * k, 12.5 * k, light);
         for t in 0..3 {
             cx.circle(px - 7.0 * k + t as f32 * 7.0 * k, py - 3.0 * k, 2.6 * k, with_a(PINK, alpha * 0.75));
         }
     }
 
-    // head
+    // head: cel shadow crescent lower-right + rim light upper-left
     let hx = x + lean * 40.0 * k;
-    cx.circle(hx, head_y, 55.0 * k, dark);
-    cx.circle(hx, head_y - 1.5 * k, 52.5 * k, fur);
+    cx.circle(hx, head_y, 55.0 * k, line);
+    cx.circle(hx + 2.0 * k, head_y + 2.0 * k, 52.5 * k, cel);
+    cx.circle(hx - 1.5 * k, head_y - 2.5 * k, 50.5 * k, fur);
+    let mut rim = Vec::new();
+    for i in 0..=6 {
+        let a = PI * 1.12 + i as f32 * (PI * 0.42 / 6.0);
+        rim.push((hx - 1.5 * k + a.cos() * 48.5 * k, head_y - 2.5 * k + a.sin() * 48.5 * k));
+    }
+    cx.polyline(&rim, 2.5 * k, with_a(Color32::WHITE, alpha * 0.5));
     // ears: perk vs droop
     for s in [-1.0, 1.0] {
         let ex = hx + s * 36.0 * k;
@@ -1191,9 +1356,12 @@ fn draw_pet(cx: &Cx, x: f32, g: f32, look: &Look, pose: &Pose, alpha: f32) {
         let twitch = if pose.mood == Mood::Playful { (cx.time * 6.0 + s).sin() * 3.0 * k } else { 0.0 };
         let tipx = ex + s * (10.0 - droop * 26.0) * k;
         let tipy = ey - (30.0 - droop * 34.0) * k + twitch;
-        cx.poly(&[(ex - s * 16.0 * k, ey + 12.0 * k), (ex + s * 18.0 * k, ey + 8.0 * k), (tipx, tipy)], dark);
+        cx.poly(&[(ex - s * 16.0 * k, ey + 12.0 * k), (ex + s * 18.0 * k, ey + 8.0 * k), (tipx, tipy)], line);
+        cx.poly(&[(ex - s * 12.0 * k, ey + 8.0 * k), (ex + s * 14.0 * k, ey + 5.0 * k), (tipx - s * 1.0 * k, tipy + 5.0 * k)], fur);
         cx.poly(&[(ex - s * 11.0 * k, ey + 8.0 * k), (ex + s * 12.0 * k, ey + 5.0 * k), (tipx - s * 2.0 * k, tipy + 7.0 * k)], with_a(PINK, alpha * 0.8));
     }
+    // ahoge (เส้นผมชี้ฟ้าแบบอนิเมะ)
+    cx.polyline(&[(hx + 2.0 * k, head_y - 50.0 * k), (hx + 7.0 * k, head_y - 64.0 * k), (hx - 3.0 * k, head_y - 71.0 * k), (hx - 8.0 * k, head_y - 63.0 * k)], 3.0 * k, line);
     // forehead stripes
     if look.stripes {
         for i in 0..3 {
@@ -1201,51 +1369,81 @@ fn draw_pet(cx: &Cx, x: f32, g: f32, look: &Look, pose: &Pose, alpha: f32) {
             cx.ellipse_rot(sx, head_y - 34.0 * k, 3.6 * k, 11.0 * k, (i as f32 - 1.0) * 0.22, with_a(look.fur_dark, alpha * 0.6));
         }
     }
-    // cheeks
+    // cheeks + anime blush
     cx.circle(hx - 34.0 * k, head_y + 14.0 * k, 12.0 * k, with_a(PINK, alpha * 0.32));
     cx.circle(hx + 34.0 * k, head_y + 14.0 * k, 12.0 * k, with_a(PINK, alpha * 0.32));
+    for s in [-1.0, 1.0] {
+        cx.ellipse(hx + s * 36.0 * k, head_y + 18.0 * k, 10.0 * k, 6.0 * k, with_a(Color32::from_rgb(255, 140, 160), alpha * 0.4));
+    }
     // muzzle
     cx.ellipse(hx, head_y + 20.0 * k, 24.0 * k, 17.0 * k, belly);
 
-    // eyes
+    // eyes: ตาโตเป็นประกายสไตล์อนิเมะ (iris + pupil + ไฮไลต์คู่ + ขนตาบน)
     let eye_y = head_y + 2.0 * k;
     for s in [-1.0, 1.0] {
         let ex = hx + s * 21.0 * k;
         let closed = pose.blink;
         if closed > 0.6 || pose.mood == Mood::Happy {
             // smiling closed eyes ^ ^
-            cx.polyline(&[(ex - 11.0 * k, eye_y + 3.0 * k), (ex, eye_y - 6.0 * k), (ex + 11.0 * k, eye_y + 3.0 * k)], 4.0 * k, with_a(INK, alpha));
+            cx.polyline(&[(ex - 11.0 * k, eye_y + 3.0 * k), (ex, eye_y - 6.0 * k), (ex + 11.0 * k, eye_y + 3.0 * k)], 4.0 * k, line);
         } else if pose.mood == Mood::Lonely {
-            cx.ellipse(ex, eye_y + 2.0 * k, 12.0 * k, 13.0 * k * (1.0 - closed * 0.85), with_a(INK, alpha));
+            let ry = 15.0 * k * (1.0 - closed * 0.85);
+            cx.ellipse(ex, eye_y + 2.0 * k, 13.0 * k, ry.max(1.2 * k), line);
+            cx.ellipse(ex, eye_y + 3.0 * k, 11.0 * k, (ry - 2.0 * k).max(1.0 * k), with_a(IRIS, alpha));
+            cx.ellipse(ex, eye_y + 4.0 * k, 5.5 * k, (ry * 0.55).max(0.8 * k), with_a(Color32::from_rgb(40, 30, 38), alpha));
             cx.circle(ex + 3.0 * k, eye_y - 2.0 * k, 3.6 * k, with_a(Color32::WHITE, alpha * 0.9));
             // droopy lid + tear
-            cx.polyline(&[(ex - 13.0 * k, eye_y - 8.0 * k), (ex + 12.0 * k, eye_y - 3.0 * k)], 3.4 * k, with_a(look.fur_dark, alpha));
+            cx.polyline(&[(ex - 13.0 * k, eye_y - 9.0 * k), (ex + 12.0 * k, eye_y - 4.0 * k)], 3.4 * k, line);
             let td = (cx.time * 0.9 + look.seed) % 1.6;
             if td < 1.0 {
-                cx.circle(ex + s * 12.0 * k, eye_y + 12.0 * k + td * 26.0 * k, 3.6 * k * (1.0 - td * 0.5), with_a(Color32::from_rgb(150, 210, 255), alpha * (1.0 - td)));
+                cx.circle(ex + s * 12.0 * k, eye_y + 14.0 * k + td * 26.0 * k, 3.6 * k * (1.0 - td * 0.5), with_a(Color32::from_rgb(150, 210, 255), alpha * (1.0 - td)));
             }
         } else {
-            let ry = 16.0 * k * (1.0 - closed * 0.9);
-            cx.ellipse(ex, eye_y, 13.0 * k, ry.max(1.2 * k), with_a(INK, alpha));
-            let pr = 8.0 * k * pose.pupil.min(1.3);
-            cx.circle(ex, eye_y + 1.0 * k, pr.min(ry * 0.8), with_a(Color32::from_rgb(70, 50, 60), alpha));
-            cx.circle(ex - 4.0 * k, eye_y - 5.0 * k, 4.4 * k, with_a(Color32::WHITE, alpha * 0.95));
-            cx.circle(ex + 4.5 * k, eye_y + 5.0 * k, 2.2 * k, with_a(Color32::WHITE, alpha * 0.6));
+            let ry = 17.0 * k * (1.0 - closed * 0.9);
+            cx.ellipse(ex, eye_y, 14.0 * k, ry.max(1.2 * k), line);
+            cx.ellipse(ex, eye_y + 1.0 * k, 12.0 * k, (ry - 2.0 * k).max(1.0 * k), with_a(IRIS, alpha));
+            let pr = 7.0 * k * pose.pupil.min(1.3);
+            cx.ellipse(ex, eye_y + 2.0 * k, pr.min(9.0 * k), (pr * 1.3).min(ry * 0.75), with_a(Color32::from_rgb(40, 30, 38), alpha));
+            cx.circle(ex - 4.5 * k, eye_y - 5.0 * k, 4.8 * k, with_a(Color32::WHITE, alpha * 0.95));
+            cx.circle(ex + 5.0 * k, eye_y + 6.0 * k, 2.4 * k, with_a(Color32::WHITE, alpha * 0.7));
+            cx.polyline(&[(ex - 13.0 * k, eye_y - ry * 0.55), (ex, eye_y - ry * 0.95), (ex + 13.0 * k, eye_y - ry * 0.55)], 3.0 * k, line);
         }
     }
-    // nose + mouth (ω)
+    // nose + mouth (ω) + เขี้ยวเล็กตอนยิ้ม
     cx.poly(&[(hx - 5.0 * k, head_y + 15.0 * k), (hx + 5.0 * k, head_y + 15.0 * k), (hx, head_y + 21.0 * k)], with_a(PINK, alpha));
     let mw = 9.0 * k;
     let my = head_y + 24.0 * k;
     let smile = pose.smile;
     cx.polyline(&[(hx - mw, my - smile * 2.0 * k), (hx - mw * 0.4, my + 3.0 * k + smile * 2.0 * k), (hx, my), (hx + mw * 0.4, my + 3.0 * k + smile * 2.0 * k), (hx + mw, my - smile * 2.0 * k)], 2.8 * k, with_a(INK, alpha * 0.85));
+    if smile > 0.35 {
+        let fx = hx + mw * 0.55;
+        cx.poly(&[(fx - 3.0 * k, my + 1.0 * k), (fx + 3.0 * k, my + 1.0 * k), (fx, my + 7.0 * k)], with_a(Color32::WHITE, alpha));
+    }
     // whiskers
     for s in [-1.0, 1.0] {
         for i in 0..3 {
             let wy = head_y + 16.0 * k + (i as f32 - 1.0) * 6.0 * k;
             let droop = if pose.mood == Mood::Lonely { 5.0 * k } else { -2.0 * k };
-            cx.line((hx + s * 24.0 * k, wy), (hx + s * 56.0 * k, wy + (i as f32 - 1.0) * 5.0 * k + droop), 1.9 * k, with_a(Color32::from_rgb(255, 255, 255), alpha * 0.75));
+            cx.line((hx + s * 24.0 * k, wy), (hx + s * 56.0 * k, wy + (i as f32 - 1.0) * 5.0 * k + droop), 1.7 * k, with_a(Color32::from_rgb(255, 255, 255), alpha * 0.65));
         }
+    }
+
+    // เครื่องหมายอารมณ์แบบอนิเมะ: ประกายวิ้งตอนฟิน / เหงื่อตกตอนเหงา
+    if pose.mood == Mood::Happy && pose.play > 0.4 {
+        for (i, s) in [-1.0, 1.0].iter().enumerate() {
+            let tw = (cx.time * 3.0 + i as f32 * 1.7).sin().max(0.0);
+            if tw > 0.15 {
+                sparkle(cx, hx + s * 62.0 * k, head_y - 44.0 * k + i as f32 * 12.0 * k, 7.0 * k * tw, alpha * 0.8 * tw);
+            }
+        }
+    }
+    if pose.mood == Mood::Lonely {
+        let dx = hx + 50.0 * k;
+        let dy = head_y - 34.0 * k + (cx.time * 1.4).sin() * 2.0 * k;
+        let drop = with_a(Color32::from_rgb(160, 215, 255), alpha * 0.9);
+        cx.poly(&[(dx, dy - 10.0 * k), (dx + 5.5 * k, dy + 2.0 * k), (dx - 5.5 * k, dy + 2.0 * k)], drop);
+        cx.circle(dx, dy + 2.0 * k, 5.5 * k, drop);
+        cx.circle(dx - 1.5 * k, dy + 1.0 * k, 1.8 * k, with_a(Color32::WHITE, alpha * 0.8));
     }
 
     // level accessories
