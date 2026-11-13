@@ -157,6 +157,7 @@ impl GiftPicker {
         thb_rate_source: &str,
         thb_rate_date: &str,
         mut moves: Option<&mut std::collections::BTreeMap<String, String>>,
+        mut tricks: Option<&mut std::collections::BTreeMap<String, String>>,
     ) -> bool {
         self.drain_icons(ui.ctx());
         let mut changed = false;
@@ -255,8 +256,9 @@ impl GiftPicker {
             .max_height(max_h)
             .show(ui, |ui| {
                 let dance = theme == Theme::Dance;
+                let pet = theme == Theme::Pet;
                 egui::Grid::new("gift-grid")
-                    .num_columns(if dance { 7 } else { 6 })
+                    .num_columns(if dance || pet { 7 } else { 6 })
                     .striped(true)
                     .spacing([8.0, 6.0])
                     .min_row_height(row_h)
@@ -269,6 +271,9 @@ impl GiftPicker {
                         ui.label(RichText::new("การกระทำ").strong());
                         if dance {
                             ui.label(RichText::new("ท่าเต้น").strong());
+                        }
+                        if pet {
+                            ui.label(RichText::new("กิมมิก").strong());
                         }
                         ui.end_row();
                         // take owned copies of the visible slice metadata to avoid borrow issues
@@ -302,6 +307,19 @@ impl GiftPicker {
                                     move_combo(ui, ("move", g.id), &mut mv);
                                     if mv != before_m {
                                         upsert_move(map, g, &mv);
+                                        changed = true;
+                                    }
+                                } else {
+                                    ui.label("—");
+                                }
+                            }
+                            if pet {
+                                if let Some(map) = tricks.as_deref_mut() {
+                                    let mut tk = current_trick(map, g);
+                                    let before_t = tk.clone();
+                                    trick_combo(ui, ("trick", g.id), &mut tk);
+                                    if tk != before_t {
+                                        upsert_trick(map, g, &tk);
                                         changed = true;
                                     }
                                 } else {
@@ -496,6 +514,39 @@ mod tests {
             Some("2026-11-12 23:42:58")
         );
     }
+
+    #[test]
+    fn pet_theme_picker_renders_the_trick_column_headlessly() {
+        let mut picker = GiftPicker::new(std::env::temp_dir().join("shrine_pet_picker_test"));
+        let ctx = egui::Context::default();
+        let mut rows = vec![("Rose".to_string(), "pray".to_string())];
+        let bridge: BridgeCtl = std::sync::Arc::new(std::sync::Mutex::new(crate::events::BridgeState {
+            username: String::new(),
+            sign_key: String::new(),
+            node: String::new(),
+            script: PathBuf::new(),
+            enabled: false,
+            reconnect: std::time::Duration::from_secs(15),
+            generation: 0,
+            child: None,
+            stdin: None,
+            status: String::new(),
+        }));
+        let mut rate = 0.3666666667;
+        let mut tricks = std::collections::BTreeMap::new();
+        tricks.insert("5655".to_string(), "wand_chase".to_string());
+        ctx.begin_pass(egui::RawInput::default());
+        ctx.root_ui(|ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                picker.ui(ui, Theme::Pet, &mut rows, &bridge, &mut rate, "", "", None, Some(&mut tricks));
+            });
+        });
+        let _ = ctx.end_pass();
+        let rose = GiftInfo { id: 5655, name: "Rose".into(), diamond_count: 1, image: String::new() };
+        assert_eq!(current_trick(&tricks, &rose), "wand_chase");
+        let unmapped = GiftInfo { id: 999999, name: "Mystery".into(), diamond_count: 150, image: String::new() };
+        assert_eq!(current_trick(&tricks, &unmapped), "fish_toy");
+    }
 }
 
 fn current_move(map: &std::collections::BTreeMap<String, String>, g: &GiftInfo) -> String {
@@ -524,6 +575,38 @@ fn move_combo(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, mv: &mut 
         .show_ui(ui, |ui| {
             for k in crate::dance::MoveKind::ALL {
                 ui.selectable_value(mv, k.key().to_string(), k.label());
+            }
+        });
+}
+
+fn current_trick(map: &std::collections::BTreeMap<String, String>, g: &GiftInfo) -> String {
+    let id_key = g.id.to_string();
+    map.iter()
+        .find(|(k, _)| k.trim() == id_key || k.trim().eq_ignore_ascii_case(&g.name))
+        .map(|(_, a)| a.clone())
+        .unwrap_or_else(|| {
+            crate::pet::trick_for(&g.name, g.id, g.diamond_count, &std::collections::BTreeMap::new())
+                .key()
+                .into()
+        })
+}
+
+fn upsert_trick(map: &mut std::collections::BTreeMap<String, String>, g: &GiftInfo, tk: &str) {
+    let name = g.name.clone();
+    map.retain(|k, _| k.trim() != g.id.to_string() && !k.trim().eq_ignore_ascii_case(&name));
+    map.insert(name, tk.to_string());
+}
+
+fn trick_combo(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, tk: &mut String) {
+    let cur = crate::pet::Trick::from_key(tk)
+        .map(|k| k.label())
+        .unwrap_or(tk.as_str());
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(cur)
+        .width(150.0)
+        .show_ui(ui, |ui| {
+            for k in crate::pet::TRICKS {
+                ui.selectable_value(tk, k.key().to_string(), format!("{} ({} เพชร)", k.label(), k.diamonds()));
             }
         });
 }

@@ -397,6 +397,16 @@ pub enum DanceRole {
     Star,
 }
 
+impl DanceRole {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Floor => "floor",
+            Self::Stage => "stage",
+            Self::Star => "star",
+        }
+    }
+}
+
 /// Stage platform height in the fullscreen ฟลอร์+เวที hall (virtual y, feet).
 pub fn hall_stage_y(vh: f32) -> f32 {
     // low enough that a t5 «สตาร์» name banner sits fully under the top card
@@ -480,6 +490,9 @@ impl Show {
     }
     pub fn in_dance(&self) -> bool {
         self.t >= self.walk && self.t < self.walk + self.dance
+    }
+    pub fn move_now(&self) -> MoveKind {
+        current_move(&self.moves, self.dance_t(), self.dance)
     }
 }
 
@@ -2575,6 +2588,35 @@ mod tests {
         for c in default_challenges() {
             let m = parse_moves(&c, " แล้วต่อด้วย ");
             assert_eq!(m.len(), 1, "{c} -> {m:?}");
+        }
+    }
+
+    #[test]
+    fn mapped_stickers_keep_their_move_and_shared_stage_star_role() {
+        let cfg = crate::config::Config::builtin();
+        let cat = crate::gifts::GiftCatalog::bundled().expect("bundled catalog");
+        let stage = cfg.rates.stage_diamonds;
+        let star = cfg.star_cutoff(100);
+        for (name, want_move) in [("Rose", "wave"), ("TikTok", "jump"), ("Finger Heart", "freeze"), ("Perfume", "fan"), ("Doughnut", "crab"), ("Hand Heart", "mirror")] {
+            let g = cat.find_by_key(name).unwrap_or_else(|| panic!("catalog missing {name}"));
+            let tier = cfg.tier_for_with_star(g.diamond_count, star);
+            assert_eq!(resolve_move(&g.name, g.id, tier, &cfg.dance.moves).key(), want_move, "{name} move");
+            let want_role = if g.diamond_count >= star { DanceRole::Star } else if g.diamond_count >= stage { DanceRole::Stage } else { DanceRole::Floor };
+            assert_eq!(gift_role(g.diamond_count, stage, star), want_role, "{name} role");
+        }
+        // the affordable defaults span all five tiers: one tier per price step
+        let tiers: Vec<_> = ["Rose", "Finger Heart", "Perfume", "Doughnut", "Hand Heart"]
+            .iter()
+            .map(|n| cfg.tier_for_with_star(cat.find_by_key(n).unwrap().diamond_count, star))
+            .collect();
+        assert_eq!(tiers, vec![0, 1, 2, 3, 4], "every tier must be reachable from a default sticker");
+    }
+
+    #[test]
+    fn unmapped_sticker_uses_the_fixed_tier_move() {
+        let cfg = crate::config::Config::builtin();
+        for (tier, want) in [(0, "wave"), (1, "jump"), (2, "spin"), (3, "slowmo"), (4, "robot")] {
+            assert_eq!(resolve_move("NotInCatalog", 0, tier, &cfg.dance.moves).key(), want, "tier {tier}");
         }
     }
 }
