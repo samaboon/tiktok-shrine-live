@@ -311,7 +311,31 @@ def main():
         check('dance: lead advances B -> C then clears (hall dancers leave on their own clock)',
               [u for u, _ in seq] == ['เต้นB', 'เต้นC', None] and seq[0][1] == ['เต้นC'] and seq[1][1] == [],
               f"succession={seq}")
+        # ---------------- session leaderboard + hype LV + viewer avatars + crowd density
+        f = state().get('fame') or {}
+        check('fame: leaderboard accumulates per-sender diamonds this session',
+              f.get('users') == 3 and f.get('total') == 60 and len(f.get('top') or []) == 3,
+              f"fame={f}")
+        check('fame: hype meter exposes level / xp / need / progress',
+              isinstance(f.get('level'), int) and f.get('level', 0) >= 1 and f.get('need', 0) > 0 and 0.0 <= f.get('progress', -1) <= 1.0,
+              f"level={f.get('level')} xp={f.get('xp')} need={f.get('need')} progress={f.get('progress')}")
+        tops = f.get('top') or []
+        check('fame: top rows sorted by diamonds desc',
+              all(tops[i]['diamonds'] >= tops[i + 1]['diamonds'] for i in range(len(tops) - 1)) and {t['user'] for t in tops} == {'เต้นA', 'เต้นB', 'เต้นC'},
+              str(tops))
+        get('/event', json.dumps({"type": "gift", "user": "รูปโปร", "gift_name": "Rose", "diamonds": 5,
+                                  "avatar": "https://example.com/a.webp"}).encode(), 'application/json')
+        s = wait_for(lambda s: any(t['user'] == 'รูปโปร' for t in (s.get('fame') or {}).get('top') or []), 6)
+        row = next((t for t in (s.get('fame') or {}).get('top') or [] if t['user'] == 'รูปโปร'), {})
+        check('fame: gift carrying an avatar URL marks the viewer as having a profile picture',
+              row.get('avatar') is True, f"row={row}")
+        d = state().get('density') or {}
+        check('density: /state exposes the crowd-density caps (floor up to 40)',
+              isinstance(d.get('max_floor'), int) and 4 <= d.get('max_floor', 0) <= 40 and 1 <= d.get('max_visible', 0) <= 20,
+              f"density={d}")
         get('/control?clear=1')
+        s = wait_for(lambda s: (s.get('fame') or {}).get('users') == 0, 6)
+        check('fame: clearing the queue starts a fresh session round', (s.get('fame') or {}).get('total') == 0, str(s.get('fame')))
 
         # ---------------- dunk mode: queue, t5 instant dunk, splash credits the sender, no lucky numbers
         get('/control?mode=dunk'); s = wait_for(lambda s: s['theme'] == 'dunk')

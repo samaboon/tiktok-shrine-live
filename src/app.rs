@@ -4,7 +4,9 @@ use crate::dance::{self, DanceIn, Stage as DanceStage};
 use crate::dunk::{self, DunkIn, Stage as DunkStage};
 use crate::config::{digit_label, Config};
 use crate::events::{restart_bridge, Action, BridgeCtl, ControlCmd, DirectIn, GiftIn, Incoming};
+use crate::fame::{stable_hash, Fame};
 use crate::gift_picker::GiftPicker;
+use crate::gifts::{cache_dir, IconFetcher, IconReady};
 use crate::krathong as kr;
 use crate::pet::{self, PetIn, PetStage};
 use crate::scene::*;
@@ -249,6 +251,10 @@ pub struct ShrineApp {
     pos_edit: Option<(f32, f32)>,
     pub updater: crate::updater::Updater,
     gift_picker: GiftPicker,
+    fame: Fame,
+    avatar_fetcher: IconFetcher,
+    avatar_tex: std::collections::HashMap<u64, egui::TextureHandle>,
+    avatar_requested: std::collections::HashSet<u64>,
 }
 
 pub struct AppInit {
@@ -352,17 +358,24 @@ impl ShrineApp {
             flash_msg: (String::new(), 0.0),
             pos_edit: None,
             updater: init.updater,
-            gift_picker: GiftPicker::new(gift_base),
+            gift_picker: GiftPicker::new(gift_base.clone()),
+            fame: Fame::new(),
+            avatar_fetcher: IconFetcher::new(cache_dir(&gift_base)),
+            avatar_tex: std::collections::HashMap::new(),
+            avatar_requested: std::collections::HashSet::new(),
         };
         app.load_gift_rows();
         for (a, tier, user, gift) in init.demo {
             if gift.trim().is_empty() {
                 let d = app.tier_min(tier).max(1);
+                app.fame.record(&fame_key(&user), d, 0);
                 app.enqueue(a, &user, d, tier, "", 0);
             } else if let Some(g) = app.gift_picker.catalog.find_by_key(&gift).cloned() {
+                app.fame.record(&fame_key(&user), g.diamond_count.max(1), 0);
                 app.enqueue(a, &user, g.diamond_count.max(1), 99, &g.name, g.id);
             } else {
                 let d = app.tier_min(tier).max(1);
+                app.fame.record(&fame_key(&user), d, 0);
                 app.enqueue(a, &user, d, tier, gift.trim(), 0);
             }
         }
@@ -501,8 +514,9 @@ impl ShrineApp {
         if theme == Theme::Dance {
             self.dancers.set_flood(self.cfg.dance.merge_window, self.cfg.dance.max_seconds, self.cfg.dance.party_threshold);
             self.sync_hall();
+            let avatar_id = self.fame.avatar_of(&user);
             self.dancers.enqueue(
-                DanceIn { user, tier, tier_name, gift: gift.to_string(), gift_id, diamonds },
+                DanceIn { user, tier, tier_name, gift: gift.to_string(), gift_id, diamonds, avatar_id },
                 &self.cfg.dance.challenges,
                 &self.cfg.dance.combo_joiner,
                 &self.cfg.dance.venue,
@@ -571,7 +585,7 @@ impl ShrineApp {
 
     /// Same path as a live gift event (action, move, stage/star, krathong look from gift id).
     /// Used by the ทดสอบ simulator; does not talk to TikTok.
-    fn play_gift(&mut self, user: &str, gift_id: u64, gift_name: &str, diamonds: u64, repeat: u32) {
+    fn play_gift(&mut self, user: &str, gift_id: u64, gift_name: &str, diamonds: u64, repeat: u32, avatar_id: u64) {
         let act = self.cfg.action_for_gift(gift_name, gift_id);
         let Some(action) = Action::parse(&act) else {
             eprintln!("[gift] {user} ส่ง {gift_name} ({gift_id}) -> ไม่ได้ตั้งค่า (none)");
@@ -581,8 +595,30 @@ impl ShrineApp {
         let total = diamonds.max(1) * repeat.max(1) as u64;
         let plays = repeat.clamp(1, self.cfg.tiktok.max_plays_per_gift.max(1));
         eprintln!("[gift] {user} ส่ง {gift_name} x{repeat} ({total} เพชร) -> {act}");
+        self.fame.record(&fame_key(user), total, avatar_id);
         for _ in 0..plays {
             self.enqueue(action, user, total, 99, gift_name, gift_id);
+        }
+    }
+
+    /// Remember a viewer's avatar URL and kick off a cached download; returns the texture id.
+    fn note_avatar(&mut self, user: &str, url: &str) -> u64 {
+        let url = url.trim();
+        if url.is_empty() {
+            return self.fame.avatar_of(&fame_key(user));
+        }
+        let id = stable_hash(url);
+        if self.avatar_requested.insert(id) {
+            self.avatar_fetcher.request(id, url);
+        }
+        id
+    }
+
+    fn drain_avatars(&mut self, ctx: &egui::Context) {
+        for IconReady { id, rgba, w, h } in self.avatar_fetcher.try_recv() {
+            let img = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+            let tex = ctx.load_texture(format!("avatar-{id}"), img, egui::TextureOptions::LINEAR);
+            self.avatar_tex.insert(id, tex);
         }
     }
 
@@ -596,7 +632,8 @@ impl ShrineApp {
         let ready: Vec<_> = self.sim_queue.iter().filter(|x| x.0 <= 0.0).cloned().collect();
         self.sim_queue.retain(|x| x.0 > 0.0);
         for (_, user, id, name, diamonds, repeat) in ready {
-            self.play_gift(&user, id, &name, diamonds, repeat);
+            let aid = self.fame.avatar_of(&fame_key(&user));
+            self.play_gift(&user, id, &name, diamonds, repeat, aid);
         }
     }
 
@@ -624,6 +661,7 @@ impl ShrineApp {
                     self.dancers.clear();
                     self.dunkers.clear();
                     self.pet.clear();
+                    self.fame.reset();
                 }
                 ControlCmd::Running(r) => {
                     self.running = r;
@@ -652,13 +690,15 @@ impl ShrineApp {
             Incoming::Direct(DirectIn { action, user, diamonds, .. }) => {
                 self.gifts_received += 1;
                 if self.running {
+                    self.fame.record(&fame_key(&user), diamonds, 0);
                     self.enqueue(action, &user, diamonds, 99, "", 0);
                 }
             }
-            Incoming::Gift(GiftIn { user, gift_id, gift_name, diamonds, repeat }) => {
+            Incoming::Gift(GiftIn { user, gift_id, gift_name, diamonds, repeat, avatar }) => {
                 self.gifts_received += 1;
                 if self.running {
-                    self.play_gift(&user, gift_id, &gift_name, diamonds, repeat);
+                    let aid = self.note_avatar(&user, &avatar);
+                    self.play_gift(&user, gift_id, &gift_name, diamonds, repeat, aid);
                 }
             }
         }
@@ -1484,7 +1524,7 @@ impl ShrineApp {
             Theme::Shrine => self.draw_shrine_world(&cx, &pcx, sprites, &bg),
             Theme::Krathong => self.draw_krathong_world(&cx, &pcx, sprites, &bg),
             Theme::Cat => self.cats.draw_world(&cx, &pcx, &bg, self.cfg.timing.reveal_seconds, self.cfg.cat.max_visible),
-            Theme::Dance => self.dancers.draw_world(&cx, &pcx, sprites, &bg, self.cfg.dance.max_visible),
+            Theme::Dance => self.dancers.draw_world(&cx, &pcx, sprites, &bg, self.cfg.dance.max_visible, &self.avatar_tex),
             Theme::Dunk => self.dunkers.draw_world(&cx, &pcx, sprites, &bg, self.cfg.dunk.max_visible),
             Theme::Pet => self.pet.draw_world(&cx, &pcx, &bg),
         }
@@ -1522,7 +1562,50 @@ impl ShrineApp {
         }
         self.draw_sticker_menu(&ui_cx, theme);
         defer_tags_flush(&cx);
+        self.draw_fame(&ui_cx);
         self.draw_hud(&ui_cx);
+    }
+
+    /// Session leaderboard + cumulative hype LV meter (competitor-style "ความคึกคัก").
+    fn draw_fame(&self, cx: &Cx) {
+        if !self.cfg.fame.show || self.fame.user_count() == 0 {
+            return;
+        }
+        let top = self.fame.top(self.cfg.fame.top_n);
+        let w = 300.0;
+        let row_h = 34.0;
+        let head_h = 64.0;
+        let h = head_h + 26.0 + top.len() as f32 * row_h + 10.0;
+        let right = self.cfg.fame.position != "left";
+        let x0 = if right { VW - 16.0 - w } else { 16.0 };
+        let y0 = 16.0;
+        let x1 = x0 + w;
+        cx.rect(x0, y0, x1, y0 + h, 14.0, rgba(10, 8, 20, 0.62));
+        cx.rect_line(x0, y0, x1, y0 + h, 14.0, 2.0, rgba(255, 200, 90, 0.5));
+        // hype level + progress bar
+        let lv = format!("ความคึกคัก  LV {}", self.fame.level);
+        cx.text(x0 + 14.0, y0 + 20.0, Align2::LEFT_CENTER, &lv, 22.0, GOLD, true);
+        let prog = format!("{}/{}", self.fame.xp, self.fame.need());
+        cx.text_o(x1 - 14.0, y0 + 20.0, Align2::RIGHT_CENTER, &prog, 15.0, Color32::WHITE, rgba(0, 0, 0, 0.7), false);
+        let bar_x0 = x0 + 14.0;
+        let bar_x1 = x1 - 14.0;
+        let bar_y = y0 + 38.0;
+        cx.rect(bar_x0, bar_y, bar_x1, bar_y + 10.0, 5.0, rgba(255, 255, 255, 0.18));
+        let pw = (bar_x1 - bar_x0) * self.fame.progress();
+        if pw > 1.0 {
+            cx.rect(bar_x0, bar_y, bar_x0 + pw, bar_y + 10.0, 5.0, rgba(255, 190, 60, 0.95));
+        }
+        // leaderboard
+        cx.text(x0 + 14.0, y0 + head_h + 8.0, Align2::LEFT_CENTER, "ผู้ชมใจดีประจำไลฟ์", 18.0, rgba(255, 220, 160, 0.95), true);
+        for (i, (name, st)) in top.iter().enumerate() {
+            let ry = y0 + head_h + 26.0 + i as f32 * row_h;
+            let cy = ry + row_h / 2.0;
+            let rank_c = match i { 0 => rgba(255, 210, 80, 1.0), 1 => rgba(210, 210, 220, 1.0), 2 => rgba(210, 150, 90, 1.0), _ => rgba(255, 255, 255, 0.7) };
+            cx.text(x0 + 16.0, cy, Align2::LEFT_CENTER, &format!("{}", i + 1), 18.0, rank_c, true);
+            draw_avatar_badge(cx, x0 + 40.0, cy, 13.0, self.avatar_tex.get(&st.avatar_id), name, stable_hash(name), 1.0);
+            cx.text(x0 + 62.0, cy, Align2::LEFT_CENTER, name, 18.0, Color32::WHITE, true);
+            cx.text_o(x1 - 14.0, cy, Align2::RIGHT_CENTER, &format!("{} เพชร", st.diamonds), 16.0, rgba(255, 220, 160, 1.0), rgba(0, 0, 0, 0.6), false);
+        }
     }
 
     fn draw_sticker_menu(&self, cx: &Cx, theme: Theme) {
@@ -2164,6 +2247,20 @@ impl ShrineApp {
             "shows_started": self.shows_started,
             "shows_finished": self.shows_finished,
             "gifts_received": self.gifts_received,
+            "fame": {
+                "show": self.cfg.fame.show,
+                "level": self.fame.level,
+                "xp": self.fame.xp,
+                "need": self.fame.need(),
+                "progress": self.fame.progress(),
+                "total": self.fame.total,
+                "users": self.fame.user_count(),
+                "top": self.fame.top(self.cfg.fame.top_n).iter().map(|(u, s)| serde_json::json!({"user": u, "diamonds": s.diamonds, "gifts": s.gifts, "avatar": s.avatar_id != 0})).collect::<Vec<_>>(),
+            },
+            "density": {
+                "max_floor": self.cfg.dance.max_floor,
+                "max_visible": self.cfg.dance.max_visible,
+            },
             "party": match self.theme() {
                 Theme::Dance => self.dancers.in_party(),
                 Theme::Dunk => self.dunkers.in_party(),
@@ -2706,6 +2803,20 @@ impl ShrineApp {
             ui.label("แสดงสถานะการเชื่อมต่อ");
             ui.checkbox(&mut self.cfg.window.show_status, "");
             ui.end_row();
+            ui.label("ลีดเดอร์บอร์ด + เมตรความคึกคัก (LV)");
+            ui.checkbox(&mut self.cfg.fame.show, "");
+            ui.end_row();
+            if self.cfg.fame.show {
+                ui.label("จำนวนอันดับที่แสดง");
+                ui.add(egui::DragValue::new(&mut self.cfg.fame.top_n).range(1..=10));
+                ui.end_row();
+                ui.label("ตำแหน่งแผง");
+                ui.horizontal(|ui| {
+                    ui.radio_value(&mut self.cfg.fame.position, "right".to_string(), "ขวา");
+                    ui.radio_value(&mut self.cfg.fame.position, "left".to_string(), "ซ้าย");
+                });
+                ui.end_row();
+            }
             if !self.cfg.ui.simple_mode {
                 ui.label("ความเร็วแอนิเมชัน");
                 ui.add(egui::Slider::new(&mut self.cfg.timing.speed, 0.5..=2.0).suffix(" x"));
@@ -2978,8 +3089,8 @@ impl ShrineApp {
         ui.horizontal(|ui| {
             ui.label("อยู่บนฟลอร์ (วินาที)");
             ui.add(egui::DragValue::new(&mut self.cfg.dance.stay_seconds).range(8.0..=120.0).speed(1.0));
-            ui.label("สูงสุดบนฟลอร์");
-            ui.add(egui::DragValue::new(&mut self.cfg.dance.max_floor).range(4..=24));
+            ui.label("สูงสุดบนฟลอร์ (ความหนาแน่นฝูงชน)");
+            ui.add(egui::DragValue::new(&mut self.cfg.dance.max_floor).range(4..=40));
             ui.label("สูงสุดบนเวที");
             ui.add(egui::DragValue::new(&mut self.cfg.dance.max_stage).range(1..=10));
         });
@@ -3005,7 +3116,7 @@ impl ShrineApp {
         });
         ui.horizontal(|ui| {
             ui.label("นักเต้นบนจอสูงสุด (เวทีอื่น)");
-            ui.add(egui::DragValue::new(&mut self.cfg.dance.max_visible).range(1..=12));
+            ui.add(egui::DragValue::new(&mut self.cfg.dance.max_visible).range(1..=20));
             ui.label("วินาทีสูงสุดต่อภารกิจ");
             ui.add(egui::DragValue::new(&mut self.cfg.dance.max_seconds).range(4.0..=90.0).speed(0.5));
         });
@@ -3129,7 +3240,8 @@ impl ShrineApp {
                             } else {
                                 self.test_sender.trim().to_string()
                             };
-                            self.play_gift(&user, g.id, &g.name, g.diamond_count, self.test_repeat.max(1));
+                            let aid = self.fame.avatar_of(&fame_key(&user));
+                            self.play_gift(&user, g.id, &g.name, g.diamond_count, self.test_repeat.max(1), aid);
                         }
                     });
                     ui.end_row();
@@ -3383,6 +3495,7 @@ impl eframe::App for ShrineApp {
         }
         self.gift_picker.ingest_cached(&ctx, self.cfg.mapped_sticker_keys());
         self.gift_picker.drain_icons(&ctx);
+        self.drain_avatars(&ctx);
         self.gift_picker.prefetch_keys(self.cfg.mapped_sticker_keys());
         self.handle_keys(&ctx);
         let dt = self.sim_dt.unwrap_or_else(|| ctx.input(|i| i.stable_dt).min(0.1));
@@ -3469,6 +3582,12 @@ fn truncate(s: &str, n: usize) -> String {
     } else {
         s.chars().take(n).collect::<String>() + "…"
     }
+}
+
+/// Same cleaned name the queue uses, so leaderboard rows match name tags.
+fn fame_key(user: &str) -> String {
+    let clean = display_name(user);
+    if clean.is_empty() { "ผู้ชม".to_string() } else { truncate(&clean, 18) }
 }
 
 fn catalog_gifts_for_sim(cfg: &Config, catalog: &crate::gifts::GiftCatalog) -> Vec<crate::gifts::GiftInfo> {
@@ -3774,6 +3893,26 @@ mod hotkey_tests {
     }
 
     #[test]
+    fn gifts_feed_the_session_leaderboard_and_hype() {
+        let (mut a, _ctx) = headless();
+        assert_eq!(a.fame.user_count(), 0);
+        a.play_gift("สมชาย", 5655, "Rose", 1, 10, 0);
+        a.play_gift("มะลิ", 5660, "Hand Heart", 100, 1, 0);
+        a.play_gift("สมชาย", 5655, "Rose", 1, 5, 0);
+        assert_eq!(a.fame.user_count(), 2);
+        assert_eq!(a.fame.total, 10 + 100 + 5);
+        let top = a.fame.top(5);
+        assert_eq!(top[0].0, "มะลิ");
+        assert_eq!(top[1].0, "สมชาย");
+        assert_eq!(top[1].1.diamonds, 15);
+        assert!(a.fame.level >= 1);
+        // clearing the queue starts a fresh session round
+        a.fame.reset();
+        assert_eq!(a.fame.user_count(), 0);
+        assert_eq!(a.fame.total, 0);
+    }
+
+    #[test]
     fn key_1_enqueues_pray_at_test_tier() {
         let (mut a, ctx) = headless();
         let n0 = queued(&a);
@@ -3883,10 +4022,10 @@ mod hotkey_tests {
         let (mut a, _ctx) = headless();
         a.cfg.theme.mode = "pet".into();
         assert!(a.active(), "the cat stays on screen while idle so its meters read");
-        a.play_gift("ก", 5655, "Rose", 1, 1);
+        a.play_gift("ก", 5655, "Rose", 1, 1, 0);
         assert_eq!(a.pet.lead().map(|s| s.trick), Some(pet::Trick::HeadPet));
         assert_eq!(a.pet.loneliness, 0.0, "petting calms the cat");
-        a.play_gift("ข", 6646, "Leon the Kitten", 4888, 1);
+        a.play_gift("ข", 6646, "Leon the Kitten", 4888, 1, 0);
         assert_eq!(a.pet.queued().len(), 1);
         a.pet.clear();
         assert!(!a.pet.busy());
@@ -3914,7 +4053,7 @@ mod hotkey_tests {
         let (mut a, _ctx) = headless();
         a.cfg.theme.mode = "pet".into();
         a.cfg.tiktok.default_action = "none".into();
-        a.play_gift("ก", 0, "ของขวัญที่ไม่อยู่ในตาราง", 199, 1);
+        a.play_gift("ก", 0, "ของขวัญที่ไม่อยู่ในตาราง", 199, 1, 0);
         assert_eq!(a.pet.lead().map(|s| s.trick), Some(pet::Trick::FriendVisit));
     }
 

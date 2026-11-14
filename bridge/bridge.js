@@ -38,12 +38,18 @@ conn.on(WebcastEvent.GIFT, (ev) => {
       gift_name: ev.gift?.name || ev.extendedGiftInfo?.name || '',
       diamonds: Number(ev.gift?.diamondCount ?? ev.extendedGiftInfo?.diamond_count ?? 0),
       repeat: Number(ev.repeatCount || 1),
+      avatar: String(avatarOf(ev.user) || ''),
     });
   } catch (e) { console.error('[bridge] gift parse error', e); }
 });
 
 function giftImage(g) {
   return g?.image?.url_list?.[0] || g?.icon?.url_list?.[0] || g?.image?.url || g?.icon?.url || g?.image || '';
+}
+
+function avatarOf(u) {
+  return u?.avatarUrl || u?.avatar_url || u?.avatarThumb?.url_list?.[0] || u?.avatar?.url_list?.[0]
+    || u?.avatarThumb?.url || u?.avatar?.url || u?.profilePicUrl || u?.picture || '';
 }
 
 function normalizeGifts(list) {

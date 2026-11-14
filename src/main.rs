@@ -7,6 +7,7 @@ mod dance;
 mod dunk;
 mod config;
 mod events;
+mod fame;
 mod gift_picker;
 mod gifts;
 mod krathong;

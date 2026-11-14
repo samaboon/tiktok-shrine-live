@@ -33,6 +33,8 @@ pub struct GiftIn {
     pub gift_name: String,
     pub diamonds: u64,
     pub repeat: u32,
+    /// viewer profile picture URL (empty when the connector doesn't provide one)
+    pub avatar: String,
 }
 
 /// A request that bypasses gift mapping (test keys / ?action=...).
@@ -134,6 +136,39 @@ const GIFT_NAME_KEYS: &[&str] = &["gift_name", "giftName", "gift", "giftname"];
 const GIFT_ID_KEYS: &[&str] = &["gift_id", "giftId", "giftid"];
 const DIAMOND_KEYS: &[&str] = &["diamonds", "diamond_count", "diamondCount", "coins", "value"];
 const REPEAT_KEYS: &[&str] = &["repeat", "repeatCount", "repeat_count", "count", "amount"];
+const AVATAR_KEYS: &[&str] = &["avatar", "avatar_url", "avatarUrl", "avatarThumb", "avatar_thumb", "profile_pic", "picture"];
+
+/// Pull a profile-picture URL out of a value that may be a plain string or a
+/// tiktok-live-connector thumb object (`{url_list:[...]}` / `{url:...}`).
+fn avatar_url(v: &Value) -> Option<String> {
+    match v {
+        Value::String(s) if !s.trim().is_empty() => Some(s.clone()),
+        Value::Object(_) => v
+            .get("url_list")
+            .and_then(|a| a.get(0))
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| get_str(v, &["url", "uri"]))
+            .filter(|s| !s.trim().is_empty()),
+        _ => None,
+    }
+}
+
+fn extract_avatar(v: &Value) -> String {
+    if let Some(u) = v.get("user").filter(|u| u.is_object()) {
+        for k in AVATAR_KEYS {
+            if let Some(a) = u.get(*k).and_then(avatar_url) {
+                return a;
+            }
+        }
+    }
+    for k in AVATAR_KEYS {
+        if let Some(a) = v.get(*k).and_then(avatar_url) {
+            return a;
+        }
+    }
+    String::new()
+}
 
 /// Parse a JSON object (from HTTP body or bridge line) into an Incoming event.
 pub fn parse_json_event(v: &Value) -> Option<Incoming> {
@@ -166,6 +201,7 @@ pub fn parse_json_event(v: &Value) -> Option<Incoming> {
         gift_name,
         diamonds: get_u64(v, DIAMOND_KEYS).unwrap_or(1),
         repeat: get_u64(v, REPEAT_KEYS).unwrap_or(1).clamp(1, 100_000) as u32,
+        avatar: extract_avatar(v),
     }))
 }
 
@@ -558,6 +594,30 @@ mod tests {
         let v: Value = serde_json::from_str(r#"{"type":"gift","user":"A","gift_id":5655,"gift_name":"Rose","diamonds":1,"repeat":7}"#).unwrap();
         match parse_json_event(&v) {
             Some(Incoming::Gift(g)) => assert_eq!((g.gift_id, g.repeat), (5655, 7)),
+            other => panic!("{other:?}"),
+        }
+    }
+    #[test]
+    fn gift_avatar_flat_nested_and_thumb() {
+        // flat string (what bridge.js emits)
+        let v: Value = serde_json::from_str(r#"{"type":"gift","user":"A","gift_id":5655,"diamonds":1,"avatar":"https://x/a.webp"}"#).unwrap();
+        match parse_json_event(&v) {
+            Some(Incoming::Gift(g)) => assert_eq!(g.avatar, "https://x/a.webp"),
+            other => panic!("{other:?}"),
+        }
+        // nested user object with a thumb url_list (raw connector style)
+        let v: Value = serde_json::from_str(r#"{"type":"gift","user":{"nickname":"A","avatarThumb":{"url_list":["https://x/t.webp","https://x/t2.webp"]}},"gift_id":5655,"diamonds":1}"#).unwrap();
+        match parse_json_event(&v) {
+            Some(Incoming::Gift(g)) => {
+                assert_eq!(g.user, "A");
+                assert_eq!(g.avatar, "https://x/t.webp");
+            }
+            other => panic!("{other:?}"),
+        }
+        // no avatar -> empty, never a panic
+        let v: Value = serde_json::from_str(r#"{"type":"gift","user":"A","gift_id":5655,"diamonds":1}"#).unwrap();
+        match parse_json_event(&v) {
+            Some(Incoming::Gift(g)) => assert_eq!(g.avatar, ""),
             other => panic!("{other:?}"),
         }
     }

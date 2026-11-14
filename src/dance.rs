@@ -409,8 +409,9 @@ impl DanceRole {
 
 /// Stage platform height in the fullscreen ฟลอร์+เวที hall (virtual y, feet).
 pub fn hall_stage_y(vh: f32) -> f32 {
-    // low enough that a t5 «สตาร์» name banner sits fully under the top card
-    vh * 0.44
+    // sit just behind the dance floor (0.86) so stage + floor read as one venue,
+    // while a t5 «สตาร์» name banner still clears the top card
+    vh * 0.62
 }
 
 /// Affordable default: a few dozen diamonds (Doughnut is 30 in the real catalog).
@@ -441,6 +442,7 @@ pub struct DanceIn {
     pub gift: String,
     pub gift_id: u64,
     pub diamonds: u64,
+    pub avatar_id: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -451,6 +453,7 @@ pub struct Show {
     pub gift: String,
     pub gift_id: u64,
     pub diamonds: u64,
+    pub avatar_id: u64,
     pub role: DanceRole,
     pub challenge: String,
     pub moves: Vec<MoveKind>,
@@ -594,7 +597,7 @@ impl Stage {
         self.party_threshold = party_threshold.clamp(2, 99);
     }
     pub fn set_hall(&mut self, max_floor: usize, max_stage: usize, stay_seconds: f32, stage_diamonds: u64, star_diamonds: u64) {
-        self.max_floor = max_floor.clamp(4, 24);
+        self.max_floor = max_floor.clamp(4, 40);
         self.max_stage = max_stage.clamp(1, 10);
         self.stay_seconds = stay_seconds.clamp(8.0, 120.0);
         self.stage_diamonds = stage_diamonds;
@@ -699,7 +702,7 @@ impl Stage {
         moves_map: &BTreeMap<String, String>,
     ) {
         self.note_gift(&inn.user);
-        let cap = max_visible.max(1).min(12);
+        let cap = max_visible.max(1).min(20);
         let extend = (countdown_for(countdown, inn.tier) * 0.35).clamp(2.0, 6.0);
 
         // same sender within the merge window → one card with ×N, longer (capped) time, same move
@@ -900,7 +903,7 @@ impl Stage {
             return Some((w.inn, w.challenge, w.moves, w.venue, w.combo));
         }
         if let Some(user) = self.overflow.pop_front() {
-            let inn = DanceIn { user, tier: 0, tier_name: "ขั้น1".into(), gift: String::new(), gift_id: 0, diamonds: 0 };
+            let inn = DanceIn { user, tier: 0, tier_name: "ขั้น1".into(), gift: String::new(), gift_id: 0, diamonds: 0, avatar_id: 0 };
             let dance_t = countdown_for(countdown, 0);
             let _ = dance_t;
             return Some((inn, "เต้นตามจังหวะ".into(), vec![MoveKind::Wave], Venue::Floor, 1));
@@ -943,6 +946,7 @@ impl Stage {
             gift: inn.gift,
             gift_id: inn.gift_id,
             diamonds: inn.diamonds,
+            avatar_id: inn.avatar_id,
             role,
             challenge,
             moves,
@@ -962,7 +966,7 @@ impl Stage {
 
     pub fn tick(&mut self, dt: f32, max_visible: usize, countdown: &[f32]) {
         self.clock += dt;
-        let cap = max_visible.max(1).min(12);
+        let cap = max_visible.max(1).min(20);
         let in_party = self.party.is_some();
         let hall = self.active_venue().map(|v| v.is_hall()).unwrap_or(false);
         let floor_all = in_party || self.active_venue() == Some(Venue::Floor) || hall;
@@ -1118,7 +1122,7 @@ impl Stage {
         }
     }
 
-    pub fn draw_world(&self, cx: &Cx, pcx: &Cx, sprites: &Sprites, bg: &str, max_visible: usize) {
+    pub fn draw_world(&self, cx: &Cx, pcx: &Cx, sprites: &Sprites, bg: &str, max_visible: usize, icons: &HashMap<u64, TextureHandle>) {
         let g = floor_y(cx.vh);
         let venue = if self.party.is_some() {
             if self.active_venue().map(|v| v.is_hall()).unwrap_or(false) { Venue::FloorStage } else { Venue::Floor }
@@ -1138,10 +1142,10 @@ impl Stage {
         let n = self.shows.len().max(1);
         // draw backups first
         for i in 1..self.shows.len() {
-            self.draw_one(cx, sprites, i, n, venue, g, false);
+            self.draw_one(cx, sprites, i, n, venue, g, false, icons);
         }
         if let Some(_) = self.shows.front() {
-            self.draw_one(cx, sprites, 0, n, venue, g, true);
+            self.draw_one(cx, sprites, 0, n, venue, g, true, icons);
         }
         self.draw_bits(cx, venue);
         if venue.is_hall() {
@@ -1159,7 +1163,7 @@ impl Stage {
         let _ = max_visible;
     }
 
-    fn draw_one(&self, cx: &Cx, sprites: &Sprites, i: usize, n: usize, venue: Venue, g: f32, is_lead: bool) {
+    fn draw_one(&self, cx: &Cx, sprites: &Sprites, i: usize, n: usize, venue: Venue, g: f32, is_lead: bool, icons: &HashMap<u64, TextureHandle>) {
         let s = &self.shows[i];
         let (tx, gy) = if venue.is_hall() {
             hall_slot(&self.shows, s, g, cx.time)
@@ -1199,6 +1203,19 @@ impl Stage {
         };
         let tag_tier = if s.role == DanceRole::Star { s.tier.max(4) } else { s.tier };
         draw_name_banner(cx, x, tag_y, &s.user, tag_tier, tag, s.appear, alpha);
+        // profile picture bubble above the name tag (real photo, else coloured initial);
+        // deferred so it lands on top of the name banners, not under them
+        let sc = ease_out_elastic(s.appear).max(0.0);
+        if sc > 0.02 {
+            let size = [26.0, 28.0, 32.0, 36.0, 42.0][tag_tier.min(4)] * sc;
+            let banner_h = size * 1.55 + if tag.is_empty() { 0.0 } else { 26.0 };
+            let r = 20.0 * sc;
+            let ay = tag_y - banner_h - r - 6.0;
+            let tex = icons.get(&s.avatar_id).cloned();
+            let name = s.user.clone();
+            let seed = s.seed;
+            on_tag_layer(cx, Box::new(move |cx| draw_avatar_badge(cx, x, ay, r, tex.as_ref(), &name, seed, alpha)));
+        }
     }
 
     fn pose_at(&self, s: &Show, target_x: f32, is_lead: bool, venue: Venue) -> (f32, Pose, Look) {
@@ -2356,7 +2373,7 @@ mod tests {
         })
     }
     fn inn_gift_d(user: &str, tier: usize, gift: &str, gift_id: u64, diamonds: u64) -> DanceIn {
-        DanceIn { user: user.into(), tier, tier_name: format!("ขั้น{}", tier + 1), gift: gift.into(), gift_id, diamonds }
+        DanceIn { user: user.into(), tier, tier_name: format!("ขั้น{}", tier + 1), gift: gift.into(), gift_id, diamonds, avatar_id: 0 }
     }
     fn no_moves() -> BTreeMap<String, String> {
         BTreeMap::new()

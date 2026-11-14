@@ -34,6 +34,25 @@ pub struct Config {
     pub pet: PetCfg,
     pub update: UpdateCfg,
     pub ui: UiCfg,
+    pub fame: FameCfg,
+}
+
+/// Session leaderboard + cumulative hype level (the "ความคึกคัก" meter).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct FameCfg {
+    /// show the leaderboard + hype panel on the overlay
+    pub show: bool,
+    /// how many top viewers to list
+    pub top_n: usize,
+    /// panel corner: "right" | "left"
+    pub position: String,
+}
+
+impl Default for FameCfg {
+    fn default() -> Self {
+        Self { show: true, top_n: 5, position: "right".into() }
+    }
 }
 
 /// First-run wizard + simplicity switch for the settings window.
@@ -479,6 +498,7 @@ impl Default for Config {
             pet: PetCfg::default(),
             update: UpdateCfg::default(),
             ui: UiCfg::default(),
+            fame: FameCfg::default(),
         }
     }
 }
@@ -574,7 +594,7 @@ impl Config {
         if cfg.dance.max_floor == 0 {
             cfg.dance.max_floor = def.dance.max_floor;
         }
-        cfg.dance.max_floor = cfg.dance.max_floor.clamp(4, 24);
+        cfg.dance.max_floor = cfg.dance.max_floor.clamp(4, 40);
         if cfg.dance.max_stage == 0 {
             cfg.dance.max_stage = def.dance.max_stage;
         }
@@ -585,7 +605,14 @@ impl Config {
         if cfg.rates.star_mode.trim().is_empty() {
             cfg.rates.star_mode = def.rates.star_mode.clone();
         }
-        cfg.dance.max_visible = cfg.dance.max_visible.clamp(1, 12);
+        cfg.dance.max_visible = cfg.dance.max_visible.clamp(1, 20);
+        cfg.fame.top_n = cfg.fame.top_n.clamp(1, 10);
+        if cfg.fame.position.trim().is_empty() {
+            cfg.fame.position = def.fame.position.clone();
+        }
+        if !matches!(cfg.fame.position.as_str(), "left" | "right") {
+            cfg.fame.position = def.fame.position.clone();
+        }
         if cfg.dance.max_seconds <= 0.0 {
             cfg.dance.max_seconds = def.dance.max_seconds;
         }
@@ -795,6 +822,27 @@ mod tests {
         for t in c.siamsi.fortunes.iter().chain(c.krathong.blessings.iter()).chain(c.cat.thanks.iter()) {
             assert!(!t.chars().any(|ch| ('\u{4E00}'..='\u{9FFF}').contains(&ch)), "CJK in {t}");
         }
+    }
+    #[test]
+    fn crowd_density_and_fame_options_are_honoured_and_clamped() {
+        let dir = std::env::temp_dir().join(format!("shrine-cfg-density-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("config.toml");
+        std::fs::write(&p, "[dance]\nmax_floor = 40\nmax_visible = 20\n[fame]\nshow = false\ntop_n = 7\nposition = \"left\"\n").unwrap();
+        let c = Config::load(&p);
+        assert_eq!(c.dance.max_floor, 40, "dense hall allowed up to 40");
+        assert_eq!(c.dance.max_visible, 20);
+        assert!(!c.fame.show);
+        assert_eq!(c.fame.top_n, 7);
+        assert_eq!(c.fame.position, "left");
+        // out-of-range values clamp back into the supported window
+        std::fs::write(&p, "[dance]\nmax_floor = 999\nmax_visible = 999\n[fame]\ntop_n = 99\nposition = \"middle\"\n").unwrap();
+        let c = Config::load(&p);
+        assert_eq!(c.dance.max_floor, 40);
+        assert_eq!(c.dance.max_visible, 20);
+        assert_eq!(c.fame.top_n, 10);
+        assert_eq!(c.fame.position, "right");
+        let _ = std::fs::remove_dir_all(&dir);
     }
     #[test]
     fn tiers_thresholds() {

@@ -253,6 +253,28 @@ impl<'a> Cx<'a> {
     pub fn image(&self, tex: &TextureHandle, x0: f32, y0: f32, x1: f32, y1: f32, tint: Color32) {
         self.p.image(tex.id(), Rect::from_min_max(self.pt(x0, y0), self.pt(x1, y1)), Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), tint);
     }
+    /// texture cropped to a circle (triangle fan), for viewer profile pictures
+    pub fn image_circle(&self, tex: &TextureHandle, x: f32, y: f32, r: f32, tint: Color32) {
+        let n = 28usize;
+        let mut mesh = Mesh::default();
+        mesh.texture_id = tex.id();
+        mesh.vertices.push(egui::epaint::Vertex { pos: self.pt(x, y), uv: Pos2::new(0.5, 0.5), color: tint });
+        for i in 0..=n {
+            let a = (i as f32 / n as f32) * std::f32::consts::TAU;
+            let (sa, ca) = a.sin_cos();
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: self.pt(x + ca * r, y + sa * r),
+                uv: Pos2::new(0.5 + 0.5 * ca, 0.5 + 0.5 * sa),
+                color: tint,
+            });
+        }
+        for i in 1..=n {
+            mesh.indices.push(0);
+            mesh.indices.push(i as u32);
+            mesh.indices.push((i + 1) as u32);
+        }
+        self.p.add(Shape::mesh(mesh));
+    }
     pub fn clip_rect_v(&self, x0: f32, y0: f32, x1: f32, y1: f32) -> Rect {
         Rect::from_min_max(self.pt(x0, y0), self.pt(x1, y1))
     }
@@ -1125,6 +1147,33 @@ fn banner_geom(cx: &Cx, x: f32, name: &str, tier: usize, tier_name: &str, sc: f3
     let pad = 12.0;
     let x = if VW - 2.0 * pad > 2.0 * half { x.clamp(pad + half, VW - pad - half) } else { VW / 2.0 };
     (x, half, size * 1.55)
+}
+
+/// deterministic pastel for the procedural (no-photo) avatar fallback
+pub fn avatar_color(seed: u64) -> Color32 {
+    const P: [[u8; 3]; 8] = [
+        [244, 143, 177], [149, 117, 205], [79, 195, 247], [77, 182, 172],
+        [255, 183, 77], [240, 98, 146], [129, 199, 132], [255, 138, 101],
+    ];
+    let c = P[(seed % P.len() as u64) as usize];
+    rgba(c[0], c[1], c[2], 1.0)
+}
+
+/// circular viewer profile picture; falls back to a coloured initial when no photo
+pub fn draw_avatar_badge(cx: &Cx, x: f32, y: f32, r: f32, tex: Option<&TextureHandle>, name: &str, seed: u64, alpha: f32) {
+    if alpha <= 0.02 || r <= 0.5 {
+        return;
+    }
+    cx.circle(x, y, r + 3.0, rgba(0, 0, 0, 0.45 * alpha));
+    match tex {
+        Some(t) => cx.image_circle(t, x, y, r, with_a(Color32::WHITE, alpha)),
+        None => {
+            cx.circle(x, y, r, with_a(avatar_color(seed), alpha));
+            let ch: String = name.chars().next().unwrap_or('?').to_string();
+            cx.text(x, y, Align2::CENTER_CENTER, &ch, r * 1.15, with_a(Color32::WHITE, alpha), true);
+        }
+    }
+    cx.ring(x, y, r + 1.0, 2.5, rgba(255, 255, 255, 0.85 * alpha));
 }
 
 pub fn draw_name_banner(cx: &Cx, x: f32, y: f32, name: &str, tier: usize, tier_name: &str, appear: f32, alpha: f32) {
