@@ -1855,6 +1855,13 @@ fn draw_cat(cx: &Cx, x: f32, gy: f32, look: &Look, pose: &Pose, alpha: f32) {
     // รูปทรงแต่ละท่า: พิกัดท้องถิ่น (หันหน้า +x, y ลบ = ขึ้น)
     let (hxl, hyl, tilt_l) = head_local(pose.form, t, pose.amt);
     let tilt = f * tilt_l;
+    let hc = pt(hxl, hyl);
+    let (sa, ca) = tilt.sin_cos();
+    let hp = |dx: f32, dy: f32| {
+        let lx = f * dx * k;
+        let ly = dy * k;
+        (hc.0 + lx * ca - ly * sa, hc.1 + lx * sa + ly * ca)
+    };
     let wag = (t * 2.2).sin() * 6.0 * (1.0 + pose.wag);
     let sw = (pose.walk).sin() * 9.0 * pose.moving;
     let sw2 = (pose.walk + PI).sin() * 7.0 * pose.moving;
@@ -1973,11 +1980,11 @@ fn draw_cat(cx: &Cx, x: f32, gy: f32, look: &Look, pose: &Pose, alpha: f32) {
     let head_ry = head_rx - 3.0;
     ell.push((hxl, hyl, head_rx, head_ry, tilt_l, fur));
 
-    // หู: ขยายสามเหลี่ยมเพื่อขอบหนา, หูไกลใช้สีลาย
+    // หู: สามเหลี่ยมเตี้ยฐานกว้าง glued เข้ากับหัว (หมุนตาม tilt), หูไกลใช้สีลาย
     let droop = if pose.eyes == Eyes::Sad { 1.0 } else { 0.0 };
     let twitch = if pose.wag > 0.5 { (t * 3.0).sin() * 1.5 } else { 0.0 };
-    let ear_far = [(hxl - 6.0, hyl - 18.0), (hxl - 26.0, hyl - 14.0), (hxl - 22.0 - 6.0 * droop, hyl - 42.0 + 12.0 * droop + twitch)];
-    let ear_near = [(hxl + 6.0, hyl - 18.0), (hxl + 26.0, hyl - 14.0), (hxl + 22.0 + 6.0 * droop, hyl - 42.0 + 12.0 * droop - twitch)];
+    let ear_far = [(-8.0, -14.0), (-26.0, -10.0), (-24.0 - 5.0 * droop, -34.0 + 10.0 * droop + twitch)];
+    let ear_near = [(8.0, -14.0), (26.0, -10.0), (24.0 + 5.0 * droop, -34.0 + 10.0 * droop - twitch)];
     let ear_far_col = with_a(look.patch.unwrap_or(look.fur), alpha);
 
     // pass 1: ขอบเข้มทั้งหมด
@@ -1990,7 +1997,7 @@ fn draw_cat(cx: &Cx, x: f32, gy: f32, look: &Look, pose: &Pose, alpha: f32) {
         cx.ellipse_rot(c.0, c.1, (e.2 + ow) * k, (e.3 + ow) * k, f * e.4, out);
     }
     for tri in [&ear_far, &ear_near] {
-        let sp = tri.map(|p| pt(p.0, p.1));
+        let sp = tri.map(|p| hp(p.0, p.1));
         cx.poly(&inflate_tri(sp, 3.2 * k), out);
     }
     // pass 2: ถมสี (หาง/ขาไกล → ตัว → ขาใกล้ → หู → หัว)
@@ -2003,7 +2010,7 @@ fn draw_cat(cx: &Cx, x: f32, gy: f32, look: &Look, pose: &Pose, alpha: f32) {
         cx.ellipse_rot(c.0, c.1, e.2 * k, e.3 * k, f * e.4, e.5);
     }
     for (tri, col) in [(&ear_far, ear_far_col), (&ear_near, fur)] {
-        let sp = tri.map(|p| pt(p.0, p.1));
+        let sp = tri.map(|p| hp(p.0, p.1));
         cx.poly(&sp, col);
         let inner = sp.map(|p| {
             let cx0 = (sp[0].0 + sp[1].0 + sp[2].0) / 3.0;
@@ -2033,14 +2040,13 @@ fn draw_cat(cx: &Cx, x: f32, gy: f32, look: &Look, pose: &Pose, alpha: f32) {
             patch(cx, &body_poly, c.0, c.1, bp.2 * k, bp.3 * k, 0.0, with_a(pc2, alpha));
         }
     }
-    let hc = pt(hxl, hyl);
     let head_poly = ellipse_pts(hc.0, hc.1, head_rx * k, head_ry * k, tilt, 32);
     if let Some(pc) = look.patch {
-        let c = pt(hxl - 12.0, hyl - 14.0);
+        let c = hp(-12.0, -14.0);
         patch(cx, &head_poly, c.0, c.1, 15.0 * k, 12.0 * k, tilt, with_a(pc, alpha));
     }
     if let Some(pc2) = look.patch2 {
-        let c = pt(hxl + 14.0, hyl - 18.0);
+        let c = hp(14.0, -18.0);
         patch(cx, &head_poly, c.0, c.1, 10.0 * k, 8.0 * k, tilt, with_a(pc2, alpha));
     }
     // หางพันด้านหน้า (ท่า loaf/นอน) วาดทับตัว
@@ -2050,12 +2056,6 @@ fn draw_cat(cx: &Cx, x: f32, gy: f32, look: &Look, pose: &Pose, alpha: f32) {
     }
 
     // หน้า: ยึดกรอบหัว (เอียงตาม tilt)
-    let (sa, ca) = tilt.sin_cos();
-    let hp = |dx: f32, dy: f32| {
-        let lx = f * dx * k;
-        let ly = dy * k;
-        (hc.0 + lx * ca - ly * sa, hc.1 + lx * sa + ly * ca)
-    };
     for s in [-1.0, 1.0] {
         let e = hp(s * 11.0, -2.0);
         match pose.eyes {
