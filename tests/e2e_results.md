@@ -1,6 +1,6 @@
-# E2E results (2026-11-14 05:49 +07)
+# E2E results (2026-11-14 14:21 +07)
 
-110/110 passed
+111/111 passed
 
 - binary: `tiktok-shrine-live 0.2.5`
 - platform: Darwin arm64
@@ -48,21 +48,21 @@
 | 38 | 3 senders: line is single-file, no overlap (>=100 px apart, on screen) | PASS | x=[430.0, 285.0] |
 | 39 | emoji stripped from name label (no tofu) | PASS |  |
 | 40 | shrine result card matches action (pray -> lucky numbers, siamsi -> fortune) | PASS | Pray -> numbers |
-| 41 | 3 senders: line advances (2nd sender steps up, 3rd moves forward) | PASS | line=[{'user': 'ผู้ส่งC', 'x': 430.0}] |
+| 41 | 3 senders: line advances (2nd sender steps up, 3rd moves forward) | PASS | line=[{'user': 'ผู้ส่งC', 'x': 317.0}] |
 | 42 | 3 senders: each gets their own turn in order | PASS |  |
 | 43 | layout toggle full/top (window resizes) | PASS | [540.0, 960.0] vs [540.0, 480.0] |
 | 44 | background mode green | PASS |  |
 | 45 | background mode scene | PASS |  |
 | 46 | background mode transparent | PASS |  |
-| 47 | transparent idle: ground props hidden | PASS | props_alpha=0.029652956873178482 |
+| 47 | transparent idle: ground props hidden | PASS | props_alpha=0.0 |
 | 48 | transparent show: props fade in | PASS | props_alpha=1.0 |
 | 49 | runtime mode switch -> krathong | PASS |  |
 | 50 | krathong: krathong is released and keeps floating | PASS | floating=1 |
 | 51 | runtime mode switch -> cat (ให้อาหารแมว) | PASS |  |
-| 52 | cat: 3 senders -> front cat + 2 cats visible in line | PASS | current=แมวA line=[{'user': 'แมวB', 'x': -59.0}, {'user': 'แมวC', 'x': -59.0}] |
+| 52 | cat: 3 senders -> front cat + 2 cats visible in line | PASS | current=แมวA line=[{'user': 'แมวB', 'x': -76.0}, {'user': 'แมวC', 'x': -76.0}] |
 | 53 | cat: walk -> pour -> eat -> card phases | PASS | ['card', 'eat', 'leave', 'pour', 'walk'] |
 | 54 | cat: result is thank-you card only (no lucky numbers) | PASS | {'thanks'} |
-| 55 | cat: line advances to next sender | PASS | line=[{'user': 'แมวC', 'x': 167.0}] |
+| 55 | cat: line advances to next sender | PASS | line=[{'user': 'แมวC', 'x': 146.0}] |
 | 56 | runtime mode switch -> dance (โหมดเต้น) | PASS |  |
 | 57 | dance: 3 senders -> lead + 2 on the floor | PASS | current=เต้นA line=[{'user': 'เต้นB', 'x': -80.0}, {'user': 'เต้นC', 'x': -80.0}] |
 | 58 | dance: walk then dance phases | PASS | ['dance', 'leave'] |
@@ -76,45 +76,46 @@
 | 66 | dance flood: 30 gifts from one sender accepted | PASS | gifts=77 g0=47 |
 | 67 | dance flood: same sender merged (combo or single live card) | PASS | combo=30 queue_len=0 party=True |
 | 68 | dance flood: app still serving after 50 senders / 10s | PASS | dance |
-| 69 | dance flood: live records stay bounded | PASS | live_units=104 queue_len=50 waiting_extra=37 |
+| 69 | dance flood: live records stay bounded | PASS | live_units=105 queue_len=50 waiting_extra=37 |
 | 70 | dance flood: not one-queue-entry-per-gift | PASS | queue_len=50 line=13/20 party=True combo=30 gifts=127 |
 | 71 | dance flood: party mode or overflow badge engaged | PASS | party=True waiting_extra=37 combo=30 |
-| 72 | dance flood: queue drains after the burst | PASS | idle=True party=False live_units=5 waiting_extra=0 current=None |
+| 72 | dance flood: queue drains after the burst | PASS | idle=True party=False live_units=6 waiting_extra=0 current=None |
 | 73 | dunk flood: repeated throws merge or enter party | PASS | combo=12 party=True queue_len=0 |
 | 74 | dunk flood: still serving | PASS | live_units=14 |
 | 75 | runtime mode switch -> pet (เลี้ยงแมว) | PASS |  |
 | 76 | pet: /state exposes cat + 3 meters + 10-trick price ladder | PASS | level=1 tricks=10 |
 | 77 | pet: cat + meters stay on screen while idle | PASS | idle=False |
-| 78 | pet: loneliness rises only after nobody plays for lonely_after | PASS | 12.0 -> 16.0 (idle > 20s) |
-| 79 | pet: fullness decays on its own | PASS | 57.8 -> 52.3 |
-| 80 | pet: all 10 ladder gifts play their own gimmick | PASS | 10/10 mapped by catalog name |
-| 81 | pet: playing pet resets loneliness + idle timer | PASS | loneliness was 16.0 |
-| 82 | pet: feeding gift refills fullness | PASS | fullness before ladder 52.3 |
-| 83 | pet: play card only (no lucky numbers) | PASS | {'play'} |
-| 84 | pet: bond levels the cat up (10 plays -> level 2+) | PASS | level=2 bond=5.0 title=แมวขี้อ้อน |
-| 85 | pet: unmapped gift picks the dearest affordable gimmick (150 -> fish_toy) | PASS | trick=fish_toy |
-| 86 | pet: same sender + gimmick inside merge window -> combo xN | PASS | combo=3 |
-| 87 | pet: gift flood stays inside max_queue | PASS | queue_len=30/30 overflow_extra=9 live_units=41 |
-| 88 | pet: clear empties the queue but keeps the raised cat | PASS | level=2 name=น้องมอมแมม |
-| 89 | v0.2.4 shared rates: stage 30 / star auto / tier5_auto | PASS | {"stage_diamonds": 30, "star_diamonds": 100, "star_mode": "auto", "tier5_auto": true, "tier_mins": [0, 5, 20, 30, 100]} |
-| 90 | v0.2.4 shared rates: five reachable tiers 0/5/20/30/100 | PASS | [0, 5, 20, 30, 100] |
-| 91 | v0.2.4 shared rates: star cutoff = priciest mapped sticker (Hand Heart 100) | PASS | star_diamonds=100 |
-| 92 | v0.2.4 shared rates: 30 diamonds = tier 4 in all 5 modes | PASS | {'shrine': 4, 'krathong': 4, 'cat': 4, 'dance': 4, 'dunk': 4} |
-| 93 | v0.2.4 dance: every mapped sticker gets its configured move (not random) | PASS | Rose->wave, TikTok->jump, Finger Heart->freeze, Perfume->fan, Doughnut->crab, Hand Heart->mirror |
-| 94 | v0.2.4 dance: floor below 30, stage at 30, star at 100 | PASS | 1->floor, 1->floor, 5->floor, 20->floor, 30->stage, 100->star |
-| 95 | v0.2.4 dance: unmapped sticker uses the fixed tier move (tier 3 = spin) | PASS | move=spin tier=3 |
-| 96 | v0.2.4 dance: combo xN keeps the same sticker move | PASS | move=wave combo=3 |
-| 97 | v0.2.4 star: Hand Heart 100 is star, Perfume 20 is not (shrine + krathong) | PASS | shrine:100=True,20=False, krathong:100=True,20=False |
-| 98 | runtime mode switch -> shrine | PASS |  |
-| 99 | click-through on/off via /control | PASS |  |
-| 100 | stop: gifts ignored while stopped | PASS |  |
-| 101 | start: gifts accepted again | PASS |  |
-| 102 | idle=hidden: scene fades fully transparent when idle | PASS | alpha=0.00 |
-| 103 | idle=hidden: gift fades the scene back in and plays | PASS |  |
-| 104 | idle=ambient: subtle motion keeps running | PASS |  |
-| 105 | idle=still: back to frozen still picture | PASS |  |
-| 106 | save writes config.toml | PASS |  |
-| 107 | reload picks up edited config.toml | PASS |  |
-| 108 | saved config keeps Thai text (UTF-8) | PASS |  |
-| 109 | Ctrl+Q quits | PASS | headless egui pass: hotkey_tests::cmd_q_requests_window_close (ViewportCommand::Close) |
-| 110 | no panic in log | PASS |  |
+| 78 | pet: loneliness rises only after nobody plays for lonely_after | PASS | 12.0 -> 15.3 (idle > 20s) |
+| 79 | pet: cat roams the room on its own (poses / walking) | PASS | acts=['loaf', 'sit', 'sniff', 'stretch', 'walk'] x_span=515 |
+| 80 | pet: fullness decays on its own | PASS | 3.4 -> 0.0 |
+| 81 | pet: all 10 ladder gifts play their own gimmick | PASS | 10/10 mapped by catalog name |
+| 82 | pet: playing pet resets loneliness + idle timer | PASS | loneliness was 100.0 |
+| 83 | pet: feeding gift refills fullness | PASS | fullness before ladder 0.0 |
+| 84 | pet: play card only (no lucky numbers) | PASS | {'play'} |
+| 85 | pet: bond levels the cat up (10 plays -> level 2+) | PASS | level=2 bond=5.0 title=แมวขี้อ้อน |
+| 86 | pet: unmapped gift picks the dearest affordable gimmick (150 -> fish_toy) | PASS | trick=fish_toy |
+| 87 | pet: same sender + gimmick inside merge window -> combo xN | PASS | combo=3 |
+| 88 | pet: gift flood stays inside max_queue | PASS | queue_len=30/30 overflow_extra=9 live_units=41 |
+| 89 | pet: clear empties the queue but keeps the raised cat | PASS | level=2 name=น้องมอมแมม |
+| 90 | v0.2.4 shared rates: stage 30 / star auto / tier5_auto | PASS | {"stage_diamonds": 30, "star_diamonds": 100, "star_mode": "auto", "tier5_auto": true, "tier_mins": [0, 5, 20, 30, 100]} |
+| 91 | v0.2.4 shared rates: five reachable tiers 0/5/20/30/100 | PASS | [0, 5, 20, 30, 100] |
+| 92 | v0.2.4 shared rates: star cutoff = priciest mapped sticker (Hand Heart 100) | PASS | star_diamonds=100 |
+| 93 | v0.2.4 shared rates: 30 diamonds = tier 4 in all 5 modes | PASS | {'shrine': 4, 'krathong': 4, 'cat': 4, 'dance': 4, 'dunk': 4} |
+| 94 | v0.2.4 dance: every mapped sticker gets its configured move (not random) | PASS | Rose->wave, TikTok->jump, Finger Heart->freeze, Perfume->fan, Doughnut->crab, Hand Heart->mirror |
+| 95 | v0.2.4 dance: floor below 30, stage at 30, star at 100 | PASS | 1->floor, 1->floor, 5->floor, 20->floor, 30->stage, 100->star |
+| 96 | v0.2.4 dance: unmapped sticker uses the fixed tier move (tier 3 = spin) | PASS | move=spin tier=3 |
+| 97 | v0.2.4 dance: combo xN keeps the same sticker move | PASS | move=wave combo=3 |
+| 98 | v0.2.4 star: Hand Heart 100 is star, Perfume 20 is not (shrine + krathong) | PASS | shrine:100=True,20=False, krathong:100=True,20=False |
+| 99 | runtime mode switch -> shrine | PASS |  |
+| 100 | click-through on/off via /control | PASS |  |
+| 101 | stop: gifts ignored while stopped | PASS |  |
+| 102 | start: gifts accepted again | PASS |  |
+| 103 | idle=hidden: scene fades fully transparent when idle | PASS | alpha=0.00 |
+| 104 | idle=hidden: gift fades the scene back in and plays | PASS |  |
+| 105 | idle=ambient: subtle motion keeps running | PASS |  |
+| 106 | idle=still: back to frozen still picture | PASS |  |
+| 107 | save writes config.toml | PASS |  |
+| 108 | reload picks up edited config.toml | PASS |  |
+| 109 | saved config keeps Thai text (UTF-8) | PASS |  |
+| 110 | Ctrl+Q quits | PASS | headless egui pass: hotkey_tests::cmd_q_requests_window_close (ViewportCommand::Close) |
+| 111 | no panic in log | PASS |  |

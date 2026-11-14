@@ -2078,6 +2078,8 @@ impl ShrineApp {
             "level": self.pet.level,
             "level_title": pet::level_title(self.pet.level),
             "mood": self.pet.mood().key(),
+            "activity": self.pet.activity().key(),
+            "cat_x": self.pet.cat_x(),
             "since_touch": self.pet.since_touch(),
             "lonely_after": self.pet.lonely_after(),
             "max_level": self.cfg.pet.max_level,

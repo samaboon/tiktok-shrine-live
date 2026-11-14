@@ -398,6 +398,16 @@ def main():
         s = wait_for(lambda s: (s.get('pet') or {}).get('since_touch', 0) > la + 2, 15)
         l1 = (s.get('pet') or {}).get('loneliness', 0)
         check('pet: loneliness rises only after nobody plays for lonely_after', l1 > l0 + 1, f'{l0:.1f} -> {l1:.1f} (idle > {la:.0f}s)')
+        # roaming: the cat should move around / change pose on its own, not sit frozen
+        acts = set(); xs = []
+        for _ in range(30):
+            pp = state().get('pet') or {}
+            if pp.get('activity'): acts.add(pp['activity'])
+            if pp.get('cat_x') is not None: xs.append(pp['cat_x'])
+            time.sleep(0.5)
+        span = (max(xs) - min(xs)) if xs else 0
+        check('pet: cat roams the room on its own (poses / walking)', len(acts) >= 2 or span > 60,
+              f"acts={sorted(acts)} x_span={span:.0f}")
         f0 = (state().get('pet') or {}).get('fullness', 0); time.sleep(1.5)
         f1 = (state().get('pet') or {}).get('fullness', 0)
         check('pet: fullness decays on its own', f1 < f0 - 2, f'{f0:.1f} -> {f1:.1f}')
@@ -407,6 +417,7 @@ def main():
                   ('Leon the Kitten', 4888, 'golden_kitten')]
         cards = set(); bad = []; fed = False; lonely_ok = False
         fb = (state().get('pet') or {}).get('fullness', 0)
+        lb = (state().get('pet') or {}).get('loneliness', 0)
         for name, d, key in ladder:
             get(f'/gift?gift_name={q(name)}&user={q("เลี้ยง" + key)}&diamonds={d}')
             c = wait_for(lambda s: (s.get('current') or {}).get('trick') == key, 12).get('current') or {}
@@ -414,11 +425,11 @@ def main():
             cards.add(c.get('card'))
             if key == 'head_pet':
                 pd = state().get('pet') or {}
-                lonely_ok = pd.get('loneliness', 100) < l1 - 5 and pd.get('since_touch', 99) < 3
+                lonely_ok = pd.get('loneliness', 100) < lb - 5 and pd.get('since_touch', 99) < 3
             if key == 'milk_bowl':
                 fed = (state().get('pet') or {}).get('fullness', 0) > fb + 5
         check('pet: all 10 ladder gifts play their own gimmick', not bad, ', '.join(bad) or '10/10 mapped by catalog name')
-        check('pet: playing pet resets loneliness + idle timer', lonely_ok, f'loneliness was {l1:.1f}')
+        check('pet: playing pet resets loneliness + idle timer', lonely_ok, f'loneliness was {lb:.1f}')
         check('pet: feeding gift refills fullness', fed, f'fullness before ladder {fb:.1f}')
         check('pet: play card only (no lucky numbers)', cards == {'play'}, str(cards))
         s = wait_for(lambda s: s.get('current') is None and not s.get('queue'), 15)
